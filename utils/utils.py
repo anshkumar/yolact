@@ -72,8 +72,8 @@ def map_to_offset(x):
 # crop the prediction of mask so as to calculate the linear combination mask loss
 def crop(pred, boxes):
     pred_shape = tf.shape(pred)
-    w = tf.cast(tf.range(pred_shape[1]), tf.float32)
-    h = tf.expand_dims(tf.cast(tf.range(pred_shape[2]), tf.float32), axis=-1)
+    w = tf.cast(tf.range(pred_shape[2]), tf.float32)
+    h = tf.expand_dims(tf.cast(tf.range(pred_shape[1]), tf.float32), axis=-1)
 
     cols = tf.broadcast_to(w, pred_shape)
     rows = tf.broadcast_to(h, pred_shape)
