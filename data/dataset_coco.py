@@ -14,19 +14,20 @@ from data import yolact_parser
 
 
 # Todo encapsulate it as a class, here is the place to get dataset(train, eval, test)
-def prepare_dataloader(tfrecord_dir, batch_size, subset="train"):
+def prepare_dataloader(img_h, img_w, feature_map_size, protonet_out_size, aspect_ratio, scale, tfrecord_dir, batch_size, subset="train"):
 
-    anchorobj = anchor.Anchor(img_size=550,
-                              feature_map_size=[69, 35, 18, 9, 5],
-                              aspect_ratio=[1, 0.5, 2],
-                              scale=[24, 48, 96, 192, 384])
+    anchorobj = anchor.Anchor(img_size_h=img_h,img_size_w=img_w,
+                              feature_map_size=feature_map_size,
+                              aspect_ratio=aspect_ratio,
+                              scale=scale)
 
-    parser = yolact_parser.Parser(output_size=550,
+    parser = yolact_parser.Parser(output_size=[img_h, img_w], # (h,w)
                                   anchor_instance=anchorobj,
                                   match_threshold=0.5,
                                   unmatched_threshold=0.5,
-                                  mode=subset)
-    files = tf.io.matching_files(os.path.join(tfrecord_dir, "coco_%s.*" % subset))
+                                  mode=subset,
+                                  proto_output_size=[int(protonet_out_size[0]), int(protonet_out_size[1])])
+    files = tf.io.matching_files(os.path.join(tfrecord_dir, "%s.*" % subset))
     num_shards = tf.cast(tf.shape(files)[0], tf.int64)
     shards = tf.data.Dataset.from_tensor_slices(files)
     shards = shards.shuffle(num_shards)

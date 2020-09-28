@@ -14,8 +14,7 @@ class TfExampleDecoder(object):
             'image/object/bbox/xmax': tf.io.VarLenFeature(dtype=tf.float32),
             'image/object/bbox/ymin': tf.io.VarLenFeature(dtype=tf.float32),
             'image/object/bbox/ymax': tf.io.VarLenFeature(dtype=tf.float32),
-            'image/object/class/label_id': tf.io.VarLenFeature(dtype=tf.int64),
-            'image/object/is_crowd': tf.io.VarLenFeature(dtype=tf.int64),
+            'image/object/class/label': tf.io.VarLenFeature(dtype=tf.int64),
             'image/object/mask': tf.io.VarLenFeature(dtype=tf.string),
         }
 
@@ -66,17 +65,12 @@ class TfExampleDecoder(object):
         image = self._decode_image(parsed_tensors)
         boxes = self._decode_boxes(parsed_tensors)
         masks = self._decode_masks(parsed_tensors)
-        is_crowds = tf.cond(
-            tf.greater(tf.shape(parsed_tensors['image/object/is_crowd']), 0),
-            lambda: tf.cast(parsed_tensors['image/object/is_crowd'], dtype=tf.bool),
-            lambda: tf.zeros_like(parsed_tensors['image/object/class/label_id'], dtype=tf.bool))
 
         decoded_tensors = {
             'image': image,
             'height': parsed_tensors['image/height'],
             'width': parsed_tensors['image/width'],
-            'gt_classes': parsed_tensors['image/object/class/label_id'],
-            'gt_is_crowd': is_crowds,
+            'gt_classes': parsed_tensors['image/object/class/label'],
             'gt_bboxes': boxes,
             'gt_masks': masks
         }

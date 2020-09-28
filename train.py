@@ -1,6 +1,8 @@
 import datetime
 import contextlib
 import tensorflow as tf
+tf.config.experimental_run_functions_eagerly(True)
+# tf.debugging.enable_check_numerics()
 
 # it s recommanded to use absl for tf 2.0
 from absl import app
@@ -24,17 +26,17 @@ flags.DEFINE_integer('train_iter', 800000,
                      'iteraitons')
 flags.DEFINE_integer('batch_size', 8,
                      'batch size')
-flags.DEFINE_float('lr', 1e-3,
+flags.DEFINE_float('lr', 1e-4,
                    'learning rate')
 flags.DEFINE_float('momentum', 0.9,
                    'momentum')
-flags.DEFINE_float('weight_decay', 5 * 1e-4,
+flags.DEFINE_float('weight_decay', 0.0, #5 * 1e-4,
                    'weight_decay')
 flags.DEFINE_float('print_interval', 10,
                    'number of iteration between printing loss')
 flags.DEFINE_float('save_interval', 10000,
                    'number of iteration between saving model(checkpoint)')
-flags.DEFINE_float('valid_iter', 5000,
+flags.DEFINE_float('valid_iter', 10,
                    'number of iteration between saving validation weights')
 
 
@@ -48,7 +50,7 @@ def train_step(model,
     # training using tensorflow gradient tape
     with tf.GradientTape() as tape:
         output = model(image, training=True)
-        loc_loss, conf_loss, mask_loss, seg_loss, total_loss = loss_fn(output, labels, 91)
+        loc_loss, conf_loss, mask_loss, seg_loss, total_loss = loss_fn(output, labels, 2)
     grads = tape.gradient(total_loss, model.trainable_variables)
     optimizer.apply_gradients(zip(grads, model.trainable_variables))
     metrics.update_state(total_loss)
@@ -62,7 +64,7 @@ def valid_step(model,
                image,
                labels):
     output = model(image, training=False)
-    loc_loss, conf_loss, mask_loss, seg_loss, total_loss = loss_fn(output, labels, 91)
+    loc_loss, conf_loss, mask_loss, seg_loss, total_loss = loss_fn(output, labels, 2)
     metrics.update_state(total_loss)
     return loc_loss, conf_loss, mask_loss, seg_loss
 
@@ -80,32 +82,67 @@ def main(argv):
             tf.config.optimizer.set_experimental_options(old_opts)
 
     # -----------------------------------------------------------------
+    # Creating the instance of the model specified.
+    logging.info("Creating the model instance of YOLACT")
+    model = yolact.Yolact(img_h=360, 
+                          img_w=1205,
+                          fpn_channels=256,
+                          num_class=2,
+                          num_mask=32,
+                          aspect_ratio=[1.81, 0.86, 0.78],
+                          scales=[24, 48, 96, 130, 192])
+
+    # -----------------------------------------------------------------
     # Creating dataloaders for training and validation
     logging.info("Creating the dataloader from: %s..." % FLAGS.tfrecord_dir)
-    train_dataset = dataset_coco.prepare_dataloader(tfrecord_dir=FLAGS.tfrecord_dir,
+    train_dataset = dataset_coco.prepare_dataloader(img_h=360, 
+                                                    img_w=1205,
+                                                    feature_map_size=model.feature_map_size, 
+                                                    protonet_out_size=model.protonet_out_size,
+                                                    aspect_ratio=[1, 0.5, 2], 
+                                                    scale=[24, 48, 96, 130, 192],
+                                                    tfrecord_dir=FLAGS.tfrecord_dir,
                                                     batch_size=FLAGS.batch_size,
                                                     subset='train')
 
-    valid_dataset = dataset_coco.prepare_dataloader(tfrecord_dir=FLAGS.tfrecord_dir,
+    valid_dataset = dataset_coco.prepare_dataloader(img_h=360, 
+                                                    img_w=1205,
+                                                    feature_map_size=model.feature_map_size, 
+                                                    protonet_out_size=model.protonet_out_size,
+                                                    aspect_ratio=[1, 0.5, 2], 
+                                                    scale=[24, 48, 96, 130, 192],
+                                                    tfrecord_dir=FLAGS.tfrecord_dir,
                                                     batch_size=1,
                                                     subset='val')
-    # -----------------------------------------------------------------
-    # Creating the instance of the model specified.
-    logging.info("Creating the model instance of YOLACT")
-    model = yolact.Yolact(input_size=550,
-                          fpn_channels=256,
-                          feature_map_size=[69, 35, 18, 9, 5],
-                          num_class=91,
-                          num_mask=32,
-                          aspect_ratio=[1, 0.5, 2],
-                          scales=[24, 48, 96, 192, 384])
+    
 
     # add weight decay
-    for layer in model.layers:
-        if isinstance(layer, tf.keras.layers.Conv2D) or isinstance(layer, tf.keras.layers.Dense):
-            layer.add_loss(lambda: tf.keras.regularizers.l2(FLAGS.weight_decay)(layer.kernel))
-        if hasattr(layer, 'bias_regularizer') and layer.use_bias:
-            layer.add_loss(lambda: tf.keras.regularizers.l2(FLAGS.weight_decay)(layer.bias))
+    def add_weight_decay(model, weight_decay):
+        # https://github.com/keras-team/keras/issues/12053
+        if (weight_decay is None) or (weight_decay == 0.0):
+            return
+
+        # recursion inside the model
+        def add_decay_loss(m, factor):
+            if isinstance(m, tf.keras.Model):
+                for layer in m.layers:
+                    add_decay_loss(layer, factor)
+            else:
+                for param in m.trainable_weights:
+                    with tf.keras.backend.name_scope('weight_regularizer'):
+                        regularizer = lambda: tf.keras.regularizers.l2(factor)(param)
+                        m.add_loss(regularizer)
+
+        # weight decay and l2 regularization differs by a factor of 2
+        add_decay_loss(model, weight_decay/2.0)
+        return
+
+    add_weight_decay(model, FLAGS.weight_decay)
+    # for layer in model.layers:
+    #     if isinstance(layer, tf.keras.layers.Conv2D) or isinstance(layer, tf.keras.layers.Dense):
+    #         layer.add_loss(lambda: tf.keras.regularizers.l2(FLAGS.weight_decay)(layer.kernel))
+    #     if hasattr(layer, 'bias_regularizer') and layer.use_bias:
+    #         layer.add_loss(lambda: tf.keras.regularizers.l2(FLAGS.weight_decay)(layer.bias))
 
     # -----------------------------------------------------------------
     # Choose the Optimizor, Loss Function, and Metrics, learning rate schedule
@@ -184,7 +221,8 @@ def main(argv):
             logging.info("Iteration {}, LR: {}, Total Loss: {}, B: {},  C: {}, M: {}, S:{} ".format(
                 iterations,
                 optimizer._decayed_lr(var_dtype=tf.float32),
-                train_loss.result(), loc.result(),
+                train_loss.result(), 
+                loc.result(),
                 conf.result(),
                 mask.result(),
                 seg.result()
@@ -241,6 +279,8 @@ def main(argv):
                 # Saving the weights:
                 best_val = valid_loss.result()
                 model.save_weights('./weights/weights_' + str(valid_loss.result().numpy()) + '.h5')
+                call_output = model.call.get_concrete_function(tf.TensorSpec([None, None, None, 3], tf.float32))
+                tf.saved_model.save(model, './saved_models/saved_model_'+ str(valid_loss.result().numpy()), signatures={'serving_default': call_output})
 
             # reset the metrics
             train_loss.reset_states()

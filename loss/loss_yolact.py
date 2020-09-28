@@ -34,32 +34,36 @@ class YOLACTLoss(object):
         seg = pred['seg']
 
         # all label component
-        cls_targets = label['cls_targets']
-        box_targets = label['box_targets']
-        positiveness = label['positiveness']
+        # all_offsets: the transformed box coordinate offsets of each pair of prior and gt box
+        # conf_gt: the foreground and background labels according to the 'pos_thre' and 'neg_thre',
+        #          '0' means background, '>0' means foreground.
+        # prior_max_box: the corresponding max IoU gt box for each prior
+        # prior_max_index: the index of the corresponding max IoU gt box for each prior
+        gt_offset = label['all_offsets']
+        conf_gt = label['conf_gt']
+        prior_max_box = label['prior_max_box']
+        prior_max_index = label['prior_max_index']
+
         bbox_norm = label['bbox_for_norm']
         masks = label['mask_target']
-        max_id_for_anchors = label['max_id_for_anchors']
         classes = label['classes']
         num_obj = label['num_obj']
 
         # calculate num_pos
-        loc_loss = self._loss_location(pred_offset, box_targets, positiveness) * self._loss_weight_box
-        conf_loss = self._loss_class(pred_cls, cls_targets, num_classes, positiveness) * self._loss_weight_cls
+        loc_loss = self._loss_location(pred_offset, gt_offset, conf_gt) * self._loss_weight_box
+        conf_loss = self._loss_class(pred_cls, num_classes, conf_gt) * self._loss_weight_cls
         mask_loss = self._loss_mask(proto_out, pred_mask_coef, bbox_norm, masks, positiveness, max_id_for_anchors,
                                     max_masks_for_train=100) * self._loss_weight_mask
         seg_loss = self._loss_semantic_segmentation(seg, masks, classes, num_obj) * self._loss_weight_seg
         total_loss = loc_loss + conf_loss + mask_loss + seg_loss
         return loc_loss, conf_loss, mask_loss, seg_loss, total_loss
 
-    def _loss_location(self, pred_offset, gt_offset, positiveness):
-
-        positiveness = tf.expand_dims(positiveness, axis=-1)
-
+    def _loss_location(self, pred_offset, gt_offset, conf_gt):
+        # only compute losses from positive samples
         # get postive indices
-        pos_indices = tf.where(positiveness == 1)
-        pred_offset = tf.gather_nd(pred_offset, pos_indices[:, :-1])
-        gt_offset = tf.gather_nd(gt_offset, pos_indices[:, :-1])
+        pos_indices = tf.where(conf_gt > 0 )
+        pred_offset = tf.gather_nd(pred_offset, pos_indices)
+        gt_offset = tf.gather_nd(gt_offset, pos_indices)
 
         # calculate the smoothL1(positive_pred, positive_gt) and return
         num_pos = tf.shape(gt_offset)[0]
@@ -68,8 +72,9 @@ class YOLACTLoss(object):
 
         return loss_loc
 
-    def _loss_class(self, pred_cls, gt_cls, num_cls, positiveness):
-
+    def _loss_class(self, pred_cls, num_cls, conf_gt):
+        import pdb
+        pdb.set_trace()
         # reshape pred_cls from [batch, num_anchor, num_cls] => [batch * num_anchor, num_cls]
         pred_cls = tf.reshape(pred_cls, [-1, num_cls])
 
@@ -98,7 +103,7 @@ class YOLACTLoss(object):
         neg_softmax = neg_pred_cls
 
         # -log(softmax class 0)
-        neg_minus_log_class0 = -1 * tf.math.log(neg_softmax[:, 0])
+        neg_minus_log_class0 = -1 * tf.math.log(tf.clip_by_value(neg_softmax[:, 0], 1e-10,1.0))
 
         # sort of -log(softmax class 0)
         neg_minus_log_class0_sort = tf.argsort(neg_minus_log_class0, direction="DESCENDING")
@@ -154,7 +159,7 @@ class YOLACTLoss(object):
                 pos_mask_coef = tf.expand_dims(pos_mask_coef, axis=0)
                 pos_max_id = tf.expand_dims(pos_max_id, axis=0)
             total_pos += tf.size(pos_indices)
-            # [138, 138, num_pos]
+            # [proto_h, proto_w, num_pos]
             pred_mask = tf.linalg.matmul(proto, pos_mask_coef, transpose_a=False, transpose_b=True)
             pred_mask = tf.transpose(pred_mask, perm=(2, 0, 1))
 
@@ -165,9 +170,14 @@ class YOLACTLoss(object):
             area = bbox_center[:, -1] * bbox_center[:, -2]
 
             # crop the pred (not real crop, zero out the area outside the gt box)
-            s = tf.nn.sigmoid_cross_entropy_with_logits(gt, pred_mask)
+            # [batch, height, width, 1]
+            # pred_mask = tf.expand_dims(pred_mask, axis=-1)
+
+            s = tf.nn.sigmoid_cross_entropy_with_logits(gt, pred_mask) 
             s = utils.crop(s, bbox)
             loss = tf.reduce_sum(s, axis=[1, 2]) / area
+            # import pdb
+            # pdb.set_trace()
             loss_mask += tf.reduce_sum(loss)
 
         loss_mask /= tf.cast(total_pos, tf.float32)
@@ -177,7 +187,7 @@ class YOLACTLoss(object):
 
         shape_mask = tf.shape(mask_gt)
         num_batch = shape_mask[0]
-        seg_shape = tf.shape(pred_seg)[1]
+        seg_shape = tf.shape(pred_seg)[1:3]
         loss_seg = 0.
 
         for idx in tf.range(num_batch):
@@ -186,14 +196,13 @@ class YOLACTLoss(object):
             cls = classes[idx]
             objects = num_obj[idx]
 
-            # seg shape (69, 69, num_cls)
-            # resize masks from (100, 138, 138) to (100, 69, 69)
+            # seg shape (p3 height, p3 width, num_cls)
             masks = tf.expand_dims(masks, axis=-1)
-            masks = tf.image.resize(masks, [seg_shape, seg_shape], method=tf.image.ResizeMethod.BILINEAR)
+            masks = tf.image.resize(masks, [seg_shape[0], seg_shape[1]], method=tf.image.ResizeMethod.BILINEAR)
             masks = tf.cast(masks + 0.5, tf.int64)
             masks = tf.squeeze(tf.cast(masks, tf.float32))
 
-            # obj_mask shape (objects, 138, 138)
+            # obj_mask shape (objects, p3 height, p3 width)
             obj_mask = masks[:objects]
             obj_cls = tf.expand_dims(cls[:objects], axis=-1)
 
