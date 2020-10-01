@@ -73,57 +73,42 @@ class YOLACTLoss(object):
         return loss_loc
 
     def _loss_class(self, pred_cls, num_cls, conf_gt):
-        import pdb
-        pdb.set_trace()
-        # reshape pred_cls from [batch, num_anchor, num_cls] => [batch * num_anchor, num_cls]
-        pred_cls = tf.reshape(pred_cls, [-1, num_cls])
+        batch_conf = tf.reshape(pred_cls, [-1, num_cls])
+        batch_conf_max = tf.math.reduce_max(pred_cls)
 
-        # reshape gt_cls from [batch, num_anchor] => [batch * num_anchor, 1]
-        gt_cls = tf.expand_dims(gt_cls, axis=-1)
-        gt_cls = tf.reshape(gt_cls, [-1, 1])
+        # Hard Negative Mining
 
-        # reshape positiveness to [batch*num_anchor, 1]
-        positiveness = tf.expand_dims(positiveness, axis=-1)
-        positiveness = tf.reshape(positiveness, [-1, 1])
-        pos_indices = tf.where(positiveness == 1)
-        neg_indices = tf.where(positiveness == 0)
+        # This will be used to determine unaveraged confidence loss across all examples in a batch.
+        # https://github.com/dbolya/yolact/blob/b97e82d809e5e69dc628930070a44442fd23617a/layers/modules/multibox_loss.py#L251
+        # https://github.com/dbolya/yolact/blob/b97e82d809e5e69dc628930070a44442fd23617a/layers/box_utils.py#L316
+        mark = tf.math.log(tf.math.reduce_sum(tf.math.exp(batch_conf-batch_conf_max), 1)) + batch_conf_max - batch_conf[:,0]
 
-        # gather pos data, neg data separately
-        pos_pred_cls = tf.gather(pred_cls, pos_indices[:, 0])
-        pos_gt = tf.gather(gt_cls, pos_indices[:, 0])
+        mark = tf.reshape(mark, (tf.shape(pred_cls)[0], -1))  # (n, 27429)
+        pos_indices = tf.where(conf_gt > 0 )
+        mark = tf.tensor_scatter_nd_update(mark, pos_indices, tf.zeros(tf.shape(pos_indices)[0])) # filter out pos boxes
+        num_pos = tf.math.count_nonzero(tf.greater(conf_gt,0), axis=1, keepdims=True)
+        num_neg = num_pos * self._neg_pos_ratio
 
-        # calculate the needed amount of  negative sample
-        num_pos = tf.shape(pos_gt)[0]
-        num_neg_needed = num_pos * self._neg_pos_ratio
+        neutrals_indices = tf.where(conf_gt < 0 )
+        mark = tf.tensor_scatter_nd_update(mark, neutrals_indices, tf.zeros(tf.shape(neutrals_indices)[0])) # filter out neutrals (conf_gt = -1)
 
-        neg_pred_cls = tf.gather(pred_cls, neg_indices[:, 0])
-        neg_gt = tf.gather(gt_cls, neg_indices[:, 0])
+        idx = tf.argsort(mark, axis=1, direction='DESCENDING')
+        idx_rank = tf.argsort(idx, axis=1)
 
-        # apply softmax on the pred_cls
-        neg_softmax = neg_pred_cls
+        # Just in case there aren't enough negatives, don't start using positives as negatives
+        # Filter out neutrals and positive
+        neg_indices = tf.where((tf.cast(idx_rank, dtype=tf.int64) < num_neg) & (conf_gt == 0))
 
-        # -log(softmax class 0)
-        neg_minus_log_class0 = -1 * tf.math.log(tf.clip_by_value(neg_softmax[:, 0], 1e-10,1.0))
+        neg_pred_cls_for_loss = tf.gather(pred_cls, neg_indices)
+        neg_gt_for_loss = tf.gather(conf_gt, neg_indices)
+        pos_pred_cls_for_loss = tf.gather(pred_cls, pos_indices)
+        pos_gt_for_loss = tf.gather(conf_gt, pos_indices)
 
-        # sort of -log(softmax class 0)
-        neg_minus_log_class0_sort = tf.argsort(neg_minus_log_class0, direction="DESCENDING")
-
-        # take the first num_neg_needed idx in sort result and handle the situation if there are not enough neg
-        neg_indices_for_loss = neg_minus_log_class0_sort[:num_neg_needed]
-
-        # combine the indices of pos and neg sample, create the label for them
-        neg_pred_cls_for_loss = tf.gather(neg_pred_cls, neg_indices_for_loss)
-        neg_gt_for_loss = tf.gather(neg_gt, neg_indices_for_loss)
-
-        # calculate Cross entropy loss and return
-        # concat positive and negtive data
-        target_logits = tf.concat([pos_pred_cls, neg_pred_cls_for_loss], axis=0)
-        target_labels = tf.cast(tf.concat([pos_gt, neg_gt_for_loss], axis=0), tf.int64)
+        target_logits = tf.concat([pos_pred_cls_for_loss, neg_pred_cls_for_loss], axis=0)
+        target_labels = tf.concat([pos_gt_for_loss, neg_gt_for_loss], axis=0)
         target_labels = tf.one_hot(tf.squeeze(target_labels), depth=num_cls)
 
-        # loss
-        loss_conf = tf.reduce_sum(tf.nn.softmax_cross_entropy_with_logits(target_labels, target_logits)) / tf.cast(
-            num_pos, tf.float32)
+        loss_conf = tf.reduce_sum(tf.nn.softmax_cross_entropy_with_logits(target_labels, target_logits)) / tf.cast(num_pos, tf.float32)
 
         return loss_conf
 
