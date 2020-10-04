@@ -1,3 +1,7 @@
+"""
+Arthor: Vedanshu
+"""
+
 import tensorflow as tf
 import time
 from utils import utils
@@ -114,8 +118,6 @@ class YOLACTLoss(object):
         return loss_conf
 
     def _loss_mask(self, prior_max_index, coef_p, proto_p, mask_gt, prior_max_box, conf_gt):
-        # import pdb
-        # pdb.set_trace()
         shape_proto = tf.shape(proto_p)
         proto_h = shape_proto[1]
         proto_w = shape_proto[2]
@@ -170,6 +172,7 @@ class YOLACTLoss(object):
         return loss_m
 
     def _loss_semantic_segmentation(self, pred_seg, mask_gt, classes):
+        # Note num_classes here is without the background class so cfg.num_classes-1
         batch_size, mask_h, mask_w, num_classes = tf.shape(pred_seg)
         loss_s = 0
 
@@ -183,13 +186,13 @@ class YOLACTLoss(object):
             masks = tf.cast(masks + 0.5, tf.int64)
             masks = tf.squeeze(tf.cast(masks, tf.float32))
 
-            segment_gt = tf.zeros_like(cur_segment) # [height, width, num_cls]
+            segment_gt = tf.zeros((mask_h, mask_w, num_classes+1)) # [height, width, num_cls]; num_cls including background
             segment_gt = tf.transpose(segment_gt, perm=(2, 0, 1))
 
             obj_cls = tf.expand_dims(cur_class_gt, axis=-1)
             segment_gt = tf.tensor_scatter_nd_max(segment_gt, indices=obj_cls, updates=masks)
             segment_gt = tf.transpose(segment_gt, perm=(1, 2, 0))
 
-            loss_s += tf.reduce_sum(tf.nn.sigmoid_cross_entropy_with_logits(segment_gt, cur_segment))
+            loss_s += tf.reduce_sum(tf.nn.sigmoid_cross_entropy_with_logits(segment_gt[:,:,1:], cur_segment)) #exclude background from segment_gt
 
         return loss_s / tf.cast(mask_h, tf.float32) / tf.cast(mask_w, tf.float32)

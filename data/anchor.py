@@ -1,8 +1,11 @@
+"""
+Arthor: Vedanshu
+"""
+
 from itertools import product
 from math import sqrt
 
 import tensorflow as tf
-
 
 # Can generate one instance only when creating the model
 class Anchor(object):

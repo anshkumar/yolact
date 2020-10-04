@@ -1,5 +1,8 @@
-import tensorflow as tf
+"""
+Arthor: Vedanshu
+"""
 
+import tensorflow as tf
 
 def bboxes_intersection(bbox_ref, bboxes):
     """Compute relative intersection between a reference box and a
@@ -68,33 +71,51 @@ def map_to_offset(x):
     g_hat_h = tf.math.log(x[3, 0] / x[3, 1])
     return tf.stack([g_hat_cx, g_hat_cy, g_hat_w, g_hat_h])
 
+def sanitize_coordinates(_x1, _x2, img_size, padding = 0):
+    """
+    Sanitizes the input coordinates so that x1 < x2, x1 != x2, x1 >= 0, and x2 <= image_size.
+    Also converts from relative to absolute coordinates and casts the results to long tensors.
+    Warning: this does things in-place behind the scenes so copy if necessary.
+    """
+    _x1 = _x1 * img_size
+    _x2 = _x2 * img_size
+
+    x1 = tf.math.minimum(_x1, _x2)
+    x2 = tf.math.maximum(_x1, _x2)
+    x1 = tf.clip_by_value(x1 - padding, clip_value_min=0, clip_value_max=img_size)
+    x2 = tf.clip_by_value(x2 + padding, clip_value_min=0, clip_value_max=img_size)
+
+    return x1, x2
+
 
 # crop the prediction of mask so as to calculate the linear combination mask loss
-def crop(pred, boxes):
-    pred_shape = tf.shape(pred)
-    w = tf.cast(tf.range(pred_shape[2]), tf.float32)
-    h = tf.expand_dims(tf.cast(tf.range(pred_shape[1]), tf.float32), axis=-1)
+def crop(mask_p, boxes, padding = 1):
+    """
+    "Crop" predicted masks by zeroing out everything not in the predicted bbox.
+    Args:
+        - mask_p should be a size [h, w, n] tensor of masks
+        - boxes should be a size [n, 4] tensor of bbox coords in relative point form
+    """
+    _h, _w, _n = tf.shape(mask_p)
 
-    cols = tf.broadcast_to(w, pred_shape)
-    rows = tf.broadcast_to(h, pred_shape)
+    x1, x2 = sanitize_coordinates(boxes[:, 1], boxes[:, 3], tf.cast(_w, tf.float32), padding)
+    y1, y2 = sanitize_coordinates(boxes[:, 0], boxes[:, 2], tf.cast(_h, tf.float32), padding)
 
-    ymin = tf.broadcast_to(tf.reshape(boxes[:, 0], [-1, 1, 1]), pred_shape)
-    xmin = tf.broadcast_to(tf.reshape(boxes[:, 1], [-1, 1, 1]), pred_shape)
-    ymax = tf.broadcast_to(tf.reshape(boxes[:, 2], [-1, 1, 1]), pred_shape)
-    xmax = tf.broadcast_to(tf.reshape(boxes[:, 3], [-1, 1, 1]), pred_shape)
+    rows = tf.reshape(tf.range(_h, dtype=x1.dtype), (-1, 1, 1))
+    cols = tf.reshape(tf.range(_w, dtype=x1.dtype), (1, -1, 1))
 
-    mask_left = (cols >= xmin)
-    mask_right = (cols <= xmax)
-    mask_bottom = (rows >= ymin)
-    mask_top = (rows <= ymax)
+    cols = tf.broadcast_to(cols, (_h, _w, _n))
+    rows = tf.broadcast_to(rows, (_h, _w, _n))
 
-    crop_mask = tf.math.logical_and(tf.math.logical_and(mask_left, mask_right),
-                                    tf.math.logical_and(mask_bottom, mask_top))
+    mask_left = tf.cast(cols, tf.float32) >= tf.reshape(x1, (1, 1, -1))
+    mask_right = tf.cast(cols, tf.float32) <= tf.reshape(x2, (1, 1, -1))
+    mask_bottom = tf.cast(rows, tf.float32) >= tf.reshape(y1, (1, 1, -1))
+    mask_top = tf.cast(rows, tf.float32) <= tf.reshape(y2, (1, 1, -1))
+
+    crop_mask = tf.math.logical_and(tf.math.logical_and(mask_left, mask_right), tf.math.logical_and(mask_bottom, mask_top))
     crop_mask = tf.cast(crop_mask, tf.float32)
-    # tf.print('crop', tf.shape(crop_mask))
 
-    return pred * crop_mask
-
+    return mask_p * crop_mask
 
 # decode the offset back to center form bounding box when evaluation and prediction
 def map_to_bbox(x):

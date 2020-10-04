@@ -49,7 +49,7 @@ class Yolact(tf.keras.Model):
         self.protonet = ProtoNet(num_mask)
 
         # semantic segmentation branch to boost feature richness
-        self.semantic_segmentation = tf.keras.layers.Conv2D(num_class, (1, 1), 1, padding="same",
+        self.semantic_segmentation = tf.keras.layers.Conv2D(num_class-1, (1, 1), 1, padding="same",
                                                             kernel_initializer=tf.keras.initializers.glorot_uniform())
 
         self.num_anchor, self.priors = make_priors(img_h, img_w, self.feature_map_size, aspect_ratio, scales)

@@ -1,3 +1,8 @@
+*.pyc
+/__pycache__/*
+/data/__pycache__/*
+/layers/__pycache__/*
+/utils/__pycache__/*
 /data/annotations
 /data/train2017
 /data/val2017
