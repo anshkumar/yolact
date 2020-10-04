@@ -50,10 +50,12 @@ class YOLACTLoss(object):
         num_obj = label['num_obj']
 
         # calculate num_pos
+        # import pdb
+        # pdb.set_trace()
         loc_loss = self._loss_location(pred_offset, gt_offset, conf_gt) * self._loss_weight_box
         conf_loss = self._loss_class(pred_cls, num_classes, conf_gt) * self._loss_weight_cls
         mask_loss = self._loss_mask(prior_max_index, pred_mask_coef, proto_out, masks, prior_max_box, conf_gt) * self._loss_weight_mask
-        seg_loss = self._loss_semantic_segmentation(seg, masks, classes, num_obj) * self._loss_weight_seg
+        seg_loss = self._loss_semantic_segmentation(seg, masks, classes) * self._loss_weight_seg
         total_loss = loc_loss + conf_loss + mask_loss + seg_loss
         return loc_loss, conf_loss, mask_loss, seg_loss, total_loss
 
@@ -112,9 +114,8 @@ class YOLACTLoss(object):
         return loss_conf
 
     def _loss_mask(self, prior_max_index, coef_p, proto_p, mask_gt, prior_max_box, conf_gt):
-        import pdb 
-        pdb.set_trace()
-
+        # import pdb
+        # pdb.set_trace()
         shape_proto = tf.shape(proto_p)
         proto_h = shape_proto[1]
         proto_w = shape_proto[2]
@@ -130,7 +131,7 @@ class YOLACTLoss(object):
             _pos_coef = tf.gather_nd(coef_p[i], pos_indices) #shape: [num_positives]
             _mask_gt = mask_gt[i]
 
-            if pos_prior_index.shape[1] == 0: # num_positives are zero
+            if _pos_prior_index.shape[0] == 0: # num_positives are zero
                 continue
             
             # If exceeds the number of masks for training, select a random subset
@@ -150,51 +151,45 @@ class YOLACTLoss(object):
             mask_p = tf.linalg.matmul(proto_p[i], _pos_coef, transpose_a=False, transpose_b=True) # [proto_height, proto_width, num_pos]
             mask_p = tf.math.sigmoid(mask_p)
             
+            # crop the pred (not real crop, zero out the area outside the gt box)
             mask_p = utils.crop(mask_p, _pos_prior_box)  # _pos_prior_box.shape: (num_pos, 4)
             
             mask_loss = tf.keras.losses.binary_crossentropy(_pos_mask_gt, mask_p)
             # Normalize the mask loss to emulate roi pooling's effect on loss.
             pos_get_csize = utils.map_to_center_form(_pos_prior_box)
-            mask_loss = tf.reduce_sum(mask_loss, [0, 1]) / pos_get_csize[:, 2] / pos_get_csize[:, 3]
+            _area = pos_get_csize[:, 2] * pos_get_csize[:, 3]
+            mask_loss = tf.reduce_sum(mask_loss, [0, 1])# / _area
             
             if old_num_pos > num_pos:
                 mask_loss *= old_num_pos / num_pos
 
             loss_m += tf.reduce_sum(mask_loss)
             
-        loss_m /= tf.cast(proto_h, tf.float32) / tf.cast(proto_w, tf.float32)
+        loss_m /= (tf.cast(proto_h, tf.float32) * tf.cast(proto_w, tf.float32))
 
         return loss_m
 
-    def _loss_semantic_segmentation(self, pred_seg, mask_gt, classes, num_obj):
+    def _loss_semantic_segmentation(self, pred_seg, mask_gt, classes):
+        batch_size, mask_h, mask_w, num_classes = tf.shape(pred_seg)
+        loss_s = 0
 
-        shape_mask = tf.shape(mask_gt)
-        num_batch = shape_mask[0]
-        seg_shape = tf.shape(pred_seg)[1:3]
-        loss_seg = 0.
+        for i in range(batch_size):
+            cur_segment = pred_seg[i]
+            cur_class_gt = classes[i]
+            masks = mask_gt[i]
 
-        for idx in tf.range(num_batch):
-            seg = pred_seg[idx]
-            masks = mask_gt[idx]
-            cls = classes[idx]
-            objects = num_obj[idx]
-
-            # seg shape (p3 height, p3 width, num_cls)
             masks = tf.expand_dims(masks, axis=-1)
-            masks = tf.image.resize(masks, [seg_shape[0], seg_shape[1]], method=tf.image.ResizeMethod.BILINEAR)
+            masks = tf.image.resize(masks, [mask_h, mask_w], method=tf.image.ResizeMethod.BILINEAR)
             masks = tf.cast(masks + 0.5, tf.int64)
             masks = tf.squeeze(tf.cast(masks, tf.float32))
 
-            # obj_mask shape (objects, p3 height, p3 width)
-            obj_mask = masks[:objects]
-            obj_cls = tf.expand_dims(cls[:objects], axis=-1)
+            segment_gt = tf.zeros_like(cur_segment) # [height, width, num_cls]
+            segment_gt = tf.transpose(segment_gt, perm=(2, 0, 1))
 
-            # create empty ground truth (138, 138, num_cls)
-            seg_gt = tf.zeros_like(seg)
-            seg_gt = tf.transpose(seg_gt, perm=(2, 0, 1))
-            seg_gt = tf.tensor_scatter_nd_update(seg_gt, indices=obj_cls, updates=obj_mask)
-            seg_gt = tf.transpose(seg_gt, perm=(1, 2, 0))
-            loss_seg += tf.reduce_sum(tf.nn.sigmoid_cross_entropy_with_logits(seg_gt, seg))
-        loss_seg = loss_seg / tf.cast(seg_shape, tf.float32) ** 2 / tf.cast(num_batch, tf.float32)
+            obj_cls = tf.expand_dims(cur_class_gt, axis=-1)
+            segment_gt = tf.tensor_scatter_nd_max(segment_gt, indices=obj_cls, updates=masks)
+            segment_gt = tf.transpose(segment_gt, perm=(1, 2, 0))
 
-        return loss_seg
+            loss_s += tf.reduce_sum(tf.nn.sigmoid_cross_entropy_with_logits(segment_gt, cur_segment))
+
+        return loss_s / tf.cast(mask_h, tf.float32) / tf.cast(mask_w, tf.float32)

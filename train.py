@@ -137,7 +137,7 @@ def main(argv):
         add_decay_loss(model, weight_decay/2.0)
         return
 
-    add_weight_decay(model, FLAGS.weight_decay)
+    # add_weight_decay(model, FLAGS.weight_decay)
     # for layer in model.layers:
     #     if isinstance(layer, tf.keras.layers.Conv2D) or isinstance(layer, tf.keras.layers.Dense):
     #         layer.add_loss(lambda: tf.keras.regularizers.l2(FLAGS.weight_decay)(layer.kernel))
