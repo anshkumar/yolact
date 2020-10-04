@@ -44,7 +44,6 @@ In Tensorflow 2.0, distibuted training with multiple GPU and TPU are straighforw
 
 ## Authors
 * **Vedanshu**  
-* **HSU, CHIH-CHAO** - *Professional Machine Learning Master Student at [Mila](https://mila.quebec/)* 
 
 ## Reference
 * https://github.com/feiyuhuahuo/Yolact_minimal
