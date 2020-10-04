@@ -1,4 +1,5 @@
 *.pyc
+*.npy
 /__pycache__/*
 /data/__pycache__/*
 /layers/__pycache__/*
