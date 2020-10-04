@@ -14,11 +14,11 @@ Here is the illustration of YOLACT from original paper.
 ### (2) Create TFRecord for training 
 Refer to the tensorflow object detection api for tfrecord creation. ([link](https://github.com/tensorflow/models/blob/master/research/object_detection/g3doc/using_your_own_dataset.md))
 
-```
+
 ## Train
 ### (1) Usage
 Training procedure can be conducted directly by following command:
-```bash
+```
 python train.py -tfrecord_dir 'path of TFRecord files'
                 -weights 'path to store weights' 
                 -train_iter 'number of  iteration for training'
