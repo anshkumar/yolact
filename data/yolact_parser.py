@@ -70,6 +70,12 @@ class Parser(object):
         image = data['image']
         image = tf.image.resize(image, [self._output_size_h, self._output_size_w])
 
+        #########################
+        # _mean = tf.constant([103.94, 116.78, 123.68])
+        # _std = tf.constant([57.38, 57.12, 58.40])
+        # image = tf.image.convert_image_dtype(image, dtype=tf.float32)
+        # image = (image - _mean) / _std
+
         # convert image to range [0, 1]
         # https://github.com/tensorflow/tensorflow/issues/33892
         # image = tf.image.convert_image_dtype(image, dtype=tf.float32)

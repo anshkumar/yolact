@@ -2,7 +2,7 @@
 YOLACT:Real-time Instance Segmentation
 Ref: https://arxiv.org/abs/1904.02689
 
-Arthor: HSU, CHIHCHAO
+Arthor: HSU, CHIHCHAO, vedanshu
 """
 import tensorflow as tf
 
@@ -72,7 +72,8 @@ class Yolact(tf.keras.Model):
     @tf.function(input_signature=[tf.TensorSpec([None, None, None, 3], tf.float32)])
     def call(self, inputs):
         # backbone(ResNet + FPN)
-
+        import pdb
+        # pdb.set_trace()
         c3, c4, c5 = self.backbone_resnet(inputs)
         fpn_out = self.backbone_fpn(c3, c4, c5)
 

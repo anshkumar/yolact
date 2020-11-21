@@ -154,8 +154,7 @@ class Anchor(object):
         each_prior_index = tf.tensor_scatter_nd_update(each_prior_index, indices, updates)
 
         each_prior_box = tf.gather(gt_bbox, each_prior_index) # size: [num_priors, 4]
-        conf = tf.squeeze(tf.gather(gt_labels, each_prior_index) + 1) # the class of the max IoU gt box for each prior, size: [num_priors]
-
+        conf = tf.squeeze(tf.gather(gt_labels, each_prior_index)) # the class of the max IoU gt box for each prior, size: [num_priors]
 
         neutral_label_index = tf.where(each_prior_max < pos_thresh)
         background_label_index = tf.where(each_prior_max < neg_thresh)

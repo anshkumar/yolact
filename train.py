@@ -25,14 +25,26 @@ flags.DEFINE_string('weights', './weights',
 flags.DEFINE_integer('train_iter', 800000,
                      'iteraitons')
 flags.DEFINE_integer('batch_size', 8,
-                     'batch size')
-flags.DEFINE_float('lr', 1e-4,
+                     'train batch size')
+flags.DEFINE_integer('num_class', 10,
+                     'number of class')
+flags.DEFINE_integer('img_h', 550,
+                     'image height')
+flags.DEFINE_integer('img_w', 550,
+                     'image width')
+flags.DEFINE_list('aspect_ratio', [1, 0.5, 2],
+                   'comma-separated list of strings for aspect ratio')
+flags.DEFINE_list('scale', [24, 48, 96, 130, 192],
+                   'comma-separated list of strings for scales in pixels')
+flags.DEFINE_float('lr', 1e-3,
                    'learning rate')
+flags.DEFINE_float('decay_steps', 1000,
+                   'learning rate decay steps')
 flags.DEFINE_float('momentum', 0.9,
                    'momentum')
-flags.DEFINE_float('weight_decay', 0.0, #5 * 1e-4,
+flags.DEFINE_float('weight_decay', 5 * 1e-4,
                    'weight_decay')
-flags.DEFINE_float('print_interval', 10,
+flags.DEFINE_float('print_interval', 1,
                    'number of iteration between printing loss')
 flags.DEFINE_float('save_interval', 10000,
                    'number of iteration between saving model(checkpoint)')
@@ -50,7 +62,7 @@ def train_step(model,
     # training using tensorflow gradient tape
     with tf.GradientTape() as tape:
         output = model(image, training=True)
-        loc_loss, conf_loss, mask_loss, seg_loss, total_loss = loss_fn(output, labels, 2)
+        loc_loss, conf_loss, mask_loss, seg_loss, total_loss = loss_fn(output, labels, FLAGS.num_class+1)
     grads = tape.gradient(total_loss, model.trainable_variables)
     optimizer.apply_gradients(zip(grads, model.trainable_variables))
     metrics.update_state(total_loss)
@@ -64,7 +76,7 @@ def valid_step(model,
                image,
                labels):
     output = model(image, training=False)
-    loc_loss, conf_loss, mask_loss, seg_loss, total_loss = loss_fn(output, labels, 2)
+    loc_loss, conf_loss, mask_loss, seg_loss, total_loss = loss_fn(output, labels, FLAGS.num_class+1)
     metrics.update_state(total_loss)
     return loc_loss, conf_loss, mask_loss, seg_loss
 
@@ -84,33 +96,33 @@ def main(argv):
     # -----------------------------------------------------------------
     # Creating the instance of the model specified.
     logging.info("Creating the model instance of YOLACT")
-    model = yolact.Yolact(img_h=360, 
-                          img_w=1205,
+    model = yolact.Yolact(img_h=FLAGS.img_h, 
+                          img_w=FLAGS.img_w,
                           fpn_channels=256,
-                          num_class=2,
+                          num_class=FLAGS.num_class+1, # adding background class
                           num_mask=32,
-                          aspect_ratio=[1.81, 0.86, 0.78],
-                          scales=[24, 48, 96, 130, 192])
+                          aspect_ratio=[float(i) for i in FLAGS.aspect_ratio],
+                          scales=[int(i) for i in FLAGS.scale])
 
     # -----------------------------------------------------------------
     # Creating dataloaders for training and validation
     logging.info("Creating the dataloader from: %s..." % FLAGS.tfrecord_dir)
-    train_dataset = dataset_coco.prepare_dataloader(img_h=360, 
-                                                    img_w=1205,
+    train_dataset = dataset_coco.prepare_dataloader(img_h=FLAGS.img_h, 
+                                                    img_w=FLAGS.img_w,
                                                     feature_map_size=model.feature_map_size, 
                                                     protonet_out_size=model.protonet_out_size,
-                                                    aspect_ratio=[1, 0.5, 2], 
-                                                    scale=[24, 48, 96, 130, 192],
+                                                    aspect_ratio=[float(i) for i in FLAGS.aspect_ratio], 
+                                                    scale=[int(i) for i in FLAGS.scale],
                                                     tfrecord_dir=FLAGS.tfrecord_dir,
                                                     batch_size=FLAGS.batch_size,
                                                     subset='train')
 
-    valid_dataset = dataset_coco.prepare_dataloader(img_h=360, 
-                                                    img_w=1205,
+    valid_dataset = dataset_coco.prepare_dataloader(img_h=FLAGS.img_h, 
+                                                    img_w=FLAGS.img_w,
                                                     feature_map_size=model.feature_map_size, 
                                                     protonet_out_size=model.protonet_out_size,
-                                                    aspect_ratio=[1, 0.5, 2], 
-                                                    scale=[24, 48, 96, 130, 192],
+                                                    aspect_ratio=[float(i) for i in FLAGS.aspect_ratio], 
+                                                    scale=[int(i) for i in FLAGS.scale],
                                                     tfrecord_dir=FLAGS.tfrecord_dir,
                                                     batch_size=1,
                                                     subset='val')
@@ -137,19 +149,21 @@ def main(argv):
         add_decay_loss(model, weight_decay/2.0)
         return
 
-    # add_weight_decay(model, FLAGS.weight_decay)
-    # for layer in model.layers:
-    #     if isinstance(layer, tf.keras.layers.Conv2D) or isinstance(layer, tf.keras.layers.Dense):
-    #         layer.add_loss(lambda: tf.keras.regularizers.l2(FLAGS.weight_decay)(layer.kernel))
-    #     if hasattr(layer, 'bias_regularizer') and layer.use_bias:
-    #         layer.add_loss(lambda: tf.keras.regularizers.l2(FLAGS.weight_decay)(layer.bias))
+    add_weight_decay(model, FLAGS.weight_decay)
+    for layer in model.layers:
+        if isinstance(layer, tf.keras.layers.Conv2D) or isinstance(layer, tf.keras.layers.Dense):
+            layer.add_loss(lambda: tf.keras.regularizers.l2(FLAGS.weight_decay)(layer.kernel))
+        if hasattr(layer, 'bias_regularizer') and layer.use_bias:
+            layer.add_loss(lambda: tf.keras.regularizers.l2(FLAGS.weight_decay)(layer.bias))
 
     # -----------------------------------------------------------------
     # Choose the Optimizor, Loss Function, and Metrics, learning rate schedule
-    lr_schedule = learning_rate_schedule.Yolact_LearningRateSchedule(warmup_steps=500, warmup_lr=1e-4,
-                                                                     initial_lr=FLAGS.lr)
+    # lr_schedule = learning_rate_schedule.Yolact_LearningRateSchedule(warmup_steps=500, warmup_lr=1e-4,
+    #                                                                  initial_lr=FLAGS.lr)
     logging.info("Initiate the Optimizer and Loss function...")
-    optimizer = tf.keras.optimizers.SGD(learning_rate=lr_schedule, momentum=FLAGS.momentum)
+    # optimizer = tf.keras.optimizers.SGD(learning_rate=lr_schedule, momentum=FLAGS.momentum)
+    lr_schedule = tf.keras.experimental.CosineDecay(FLAGS.lr, FLAGS.decay_steps)
+    optimizer = tf.keras.optimizers.Adam(learning_rate=lr_schedule)
     criterion = loss_yolact.YOLACTLoss()
     train_loss = tf.keras.metrics.Mean('train_loss', dtype=tf.float32)
     valid_loss = tf.keras.metrics.Mean('valid_loss', dtype=tf.float32)

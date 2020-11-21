@@ -54,10 +54,9 @@ class YOLACTLoss(object):
         num_obj = label['num_obj']
 
         # calculate num_pos
-        # import pdb
-        # pdb.set_trace()
         loc_loss = self._loss_location(pred_offset, gt_offset, conf_gt) * self._loss_weight_box
         conf_loss = self._loss_class(pred_cls, num_classes, conf_gt) * self._loss_weight_cls
+        # conf_loss = self._focal_conf_sigmoid_loss(pred_cls, num_classes, conf_gt) * self._loss_weight_cls
         mask_loss = self._loss_mask(prior_max_index, pred_mask_coef, proto_out, masks, prior_max_box, conf_gt) * self._loss_weight_mask
         seg_loss = self._loss_semantic_segmentation(seg, masks, classes) * self._loss_weight_seg
         total_loss = loc_loss + conf_loss + mask_loss + seg_loss
@@ -73,26 +72,65 @@ class YOLACTLoss(object):
         # calculate the smoothL1(positive_pred, positive_gt) and return
         num_pos = tf.shape(gt_offset)[0]
         smoothl1loss = tf.keras.losses.Huber(delta=1., reduction=tf.losses.Reduction.NONE)
-        loss_loc = tf.reduce_sum(smoothl1loss(gt_offset, pred_offset)) / tf.cast(num_pos, tf.float32)
+        loss_loc = tf.reduce_sum(smoothl1loss(gt_offset, pred_offset)) #/ tf.cast(num_pos, tf.float32)
 
         return loss_loc
 
-    def _loss_class(self, pred_cls, num_cls, conf_gt):
+    def _focal_conf_sigmoid_loss(self, pred_cls, num_cls, conf_gt, focal_loss_alpha=0.75, focal_loss_gamma=2):
+        """
+        Focal loss but using sigmoid like the original paper.
+        Note: To make things mesh easier, the network still predicts 81 class confidences in this mode.
+              Because retinanet originally only predicts 80, we simply just don't use pred_cls[..., 0]
+        """
+        conf_gt = tf.reshape(conf_gt, -1) # [batch_size*num_priors]
+        pred_cls = tf.reshape(pred_cls, [-1, num_cls]) # [batch_size*num_priors, num_classes]
+
+        # Ignore neutral samples (class < 0)
+        keep = tf.where(conf_gt >= 0 )
+        neutrals_indices = tf.where(conf_gt < 0 )
+        conf_gt = tf.tensor_scatter_nd_update(conf_gt, neutrals_indices, tf.zeros(tf.shape(neutrals_indices)[0], dtype=tf.int64)) # filter out neutrals (conf_gt = -1)
+
+        # Compute a one-hot embedding of conf_gt
+        conf_one_gt = tf.one_hot(conf_gt, depth=num_cls)
+        conf_pm_gt  = conf_one_gt * 2 - 1 # -1 if background, +1 if forground for specific class
+
+        logpt = tf.math.log_sigmoid(pred_cls * conf_pm_gt) # note: 1 - sigmoid(x) = sigmoid(-x)
+        pt = tf.math.exp(logpt)
+
+        at = focal_loss_alpha * conf_one_gt + (1 - focal_loss_alpha) * (1 - conf_one_gt)
+
+        # Achieving following in tf
+        # at[..., 0] = 0 # Set alpha for the background class to 0 because sigmoid focal loss doesn't use it
+        ind = tf.stack([tf.range(tf.shape(at)[0]), tf.zeros(tf.shape(at)[0], dtype=tf.int32)], axis=1)
+        at = tf.tensor_scatter_nd_update(at, ind, tf.zeros(tf.shape(ind)[0]))
+
+        loss = -at * (1 - pt) ** focal_loss_gamma * logpt
+
+        loss = tf.gather_nd(tf.reduce_sum(loss, -1), keep)
+
+        return tf.reduce_sum(loss)
+
+    def _loss_class(self, pred_cls, num_cls, conf_gt, ohem_use_most_confident=True):
+        # num_cls includes background
         batch_conf = tf.reshape(pred_cls, [-1, num_cls])
         batch_conf_max = tf.math.reduce_max(pred_cls)
 
         # Hard Negative Mining
+        if ohem_use_most_confident:
+        # i.e. max(softmax) along classes > 0 
+            batch_conf = tf.nn.softmax(batch_conf, axis=1)
+            mark = tf.math.reduce_max(batch_conf[:, 1:], axis=1)
+        else:
+            # This will be used to determine unaveraged confidence loss across all examples in a batch.
+            # https://github.com/dbolya/yolact/blob/b97e82d809e5e69dc628930070a44442fd23617a/layers/modules/multibox_loss.py#L251
+            # https://github.com/dbolya/yolact/blob/b97e82d809e5e69dc628930070a44442fd23617a/layers/box_utils.py#L316
+            mark = tf.math.log(tf.math.reduce_sum(tf.math.exp(batch_conf-batch_conf_max), 1)) + batch_conf_max - batch_conf[:,0]
 
-        # This will be used to determine unaveraged confidence loss across all examples in a batch.
-        # https://github.com/dbolya/yolact/blob/b97e82d809e5e69dc628930070a44442fd23617a/layers/modules/multibox_loss.py#L251
-        # https://github.com/dbolya/yolact/blob/b97e82d809e5e69dc628930070a44442fd23617a/layers/box_utils.py#L316
-        mark = tf.math.log(tf.math.reduce_sum(tf.math.exp(batch_conf-batch_conf_max), 1)) + batch_conf_max - batch_conf[:,0]
-
-        mark = tf.reshape(mark, (tf.shape(pred_cls)[0], -1))  # (n, 27429)
+        mark = tf.reshape(mark, (tf.shape(pred_cls)[0], -1))  # (batch_size, 27429)
         pos_indices = tf.where(conf_gt > 0 )
         mark = tf.tensor_scatter_nd_update(mark, pos_indices, tf.zeros(tf.shape(pos_indices)[0])) # filter out pos boxes
         num_pos = tf.math.count_nonzero(tf.greater(conf_gt,0), axis=1, keepdims=True)
-        num_neg = num_pos * self._neg_pos_ratio
+        num_neg = tf.clip_by_value(num_pos * self._neg_pos_ratio, clip_value_min=1, clip_value_max=conf_gt.shape[1]-1)
 
         neutrals_indices = tf.where(conf_gt < 0 )
         mark = tf.tensor_scatter_nd_update(mark, neutrals_indices, tf.zeros(tf.shape(neutrals_indices)[0])) # filter out neutrals (conf_gt = -1)
@@ -104,6 +142,8 @@ class YOLACTLoss(object):
         # Filter out neutrals and positive
         neg_indices = tf.where((tf.cast(idx_rank, dtype=tf.int64) < num_neg) & (conf_gt == 0))
 
+        # neg_indices shape is (batch_size, no_prior)
+        # pred_cls shape is (batch_size, no_prior, no_class)
         neg_pred_cls_for_loss = tf.gather_nd(pred_cls, neg_indices)
         neg_gt_for_loss = tf.gather_nd(conf_gt, neg_indices)
         pos_pred_cls_for_loss = tf.gather_nd(pred_cls, pos_indices)
@@ -113,8 +153,11 @@ class YOLACTLoss(object):
         target_labels = tf.concat([pos_gt_for_loss, neg_gt_for_loss], axis=0)
         target_labels = tf.one_hot(tf.squeeze(target_labels), depth=num_cls)
 
-        loss_conf = tf.reduce_sum(tf.nn.softmax_cross_entropy_with_logits(target_labels, target_logits)) / tf.cast(num_pos, tf.float32)
+        loss_conf = tf.reduce_sum(tf.nn.softmax_cross_entropy_with_logits(target_labels, target_logits)) #/ tf.cast(num_pos, tf.float32)
 
+        if loss_conf > 500:
+            import pdb
+            pdb.set_trace()
         return loss_conf
 
     def _loss_mask(self, prior_max_index, coef_p, proto_p, mask_gt, prior_max_box, conf_gt):
@@ -160,7 +203,7 @@ class YOLACTLoss(object):
             # Normalize the mask loss to emulate roi pooling's effect on loss.
             pos_get_csize = utils.map_to_center_form(_pos_prior_box)
             _area = pos_get_csize[:, 2] * pos_get_csize[:, 3]
-            mask_loss = tf.reduce_sum(mask_loss, [0, 1])# / _area
+            mask_loss = tf.reduce_sum(mask_loss, [0, 1]) / _area
             
             if old_num_pos > num_pos:
                 mask_loss *= old_num_pos / num_pos
