@@ -22,7 +22,7 @@ flags.DEFINE_string('tfrecord_dir', './data/coco',
                     'directory of tfrecord')
 flags.DEFINE_string('weights', './weights',
                     'path to store weights')
-flags.DEFINE_integer('train_iter', 800000,
+flags.DEFINE_integer('train_iter', 100000,
                      'iteraitons')
 flags.DEFINE_integer('batch_size', 8,
                      'train batch size')
@@ -38,8 +38,8 @@ flags.DEFINE_list('scale', [24, 48, 96, 130, 192],
                    'comma-separated list of strings for scales in pixels')
 flags.DEFINE_float('lr', 1e-3,
                    'learning rate')
-flags.DEFINE_float('decay_steps', 1000,
-                   'learning rate decay steps')
+flags.DEFINE_float('total_steps', 200000,
+                   'learning rate total steps')
 flags.DEFINE_float('momentum', 0.9,
                    'momentum')
 flags.DEFINE_float('weight_decay', 5 * 1e-4,
@@ -158,11 +158,11 @@ def main(argv):
 
     # -----------------------------------------------------------------
     # Choose the Optimizor, Loss Function, and Metrics, learning rate schedule
-    # lr_schedule = learning_rate_schedule.Yolact_LearningRateSchedule(warmup_steps=500, warmup_lr=1e-4,
-    #                                                                  initial_lr=FLAGS.lr)
+    lr_schedule = learning_rate_schedule.Yolact_LearningRateSchedule(warmup_steps=5000, warmup_lr=1e-4,
+                                                                     initial_lr=FLAGS.lr, total_steps=FLAGS.total_steps)
     logging.info("Initiate the Optimizer and Loss function...")
     # optimizer = tf.keras.optimizers.SGD(learning_rate=lr_schedule, momentum=FLAGS.momentum)
-    lr_schedule = tf.keras.experimental.CosineDecay(FLAGS.lr, FLAGS.decay_steps)
+    # lr_schedule = tf.keras.experimental.CosineDecay(FLAGS.lr, FLAGS.decay_steps)
     optimizer = tf.keras.optimizers.Adam(learning_rate=lr_schedule)
     criterion = loss_yolact.YOLACTLoss()
     train_loss = tf.keras.metrics.Mean('train_loss', dtype=tf.float32)
