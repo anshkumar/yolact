@@ -30,6 +30,10 @@ class PredictionModule(tf.keras.layers.Layer):
         pred_box = self.boxConv(p)
         pred_mask = self.maskConv(p)
 
+        pred_class = tf.transpose(pred_class, (0, 2, 3, 1))
+        pred_box = tf.transpose(pred_box, (0, 2, 3, 1))
+        pred_mask = tf.transpose(pred_mask, (0, 2, 3, 1))
+
         # reshape the prediction head result for following loss calculation
         pred_class = tf.reshape(pred_class, [tf.shape(pred_class)[0], -1, self.num_class])
         pred_box = tf.reshape(pred_box, [tf.shape(pred_box)[0], -1, 4])

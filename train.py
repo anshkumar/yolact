@@ -22,7 +22,7 @@ flags.DEFINE_string('tfrecord_dir', './data/coco',
                     'directory of tfrecord')
 flags.DEFINE_string('weights', './weights',
                     'path to store weights')
-flags.DEFINE_integer('train_iter', 100000,
+flags.DEFINE_integer('train_iter', 800000,
                      'iteraitons')
 flags.DEFINE_integer('batch_size', 8,
                      'train batch size')
@@ -38,13 +38,13 @@ flags.DEFINE_list('scale', [24, 48, 96, 130, 192],
                    'comma-separated list of strings for scales in pixels')
 flags.DEFINE_float('lr', 1e-3,
                    'learning rate')
-flags.DEFINE_float('total_steps', 200000,
+flags.DEFINE_float('total_steps', 1200000,
                    'learning rate total steps')
 flags.DEFINE_float('momentum', 0.9,
                    'momentum')
 flags.DEFINE_float('weight_decay', 5 * 1e-4,
                    'weight_decay')
-flags.DEFINE_float('print_interval', 1,
+flags.DEFINE_float('print_interval', 100,
                    'number of iteration between printing loss')
 flags.DEFINE_float('save_interval', 10000,
                    'number of iteration between saving model(checkpoint)')
