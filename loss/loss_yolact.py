@@ -130,7 +130,7 @@ class YOLACTLoss(object):
         pos_indices = tf.where(conf_gt > 0 )
         mark = tf.tensor_scatter_nd_update(mark, pos_indices, tf.zeros(tf.shape(pos_indices)[0])) # filter out pos boxes
         num_pos = tf.math.count_nonzero(tf.greater(conf_gt,0), axis=1, keepdims=True)
-        num_neg = tf.clip_by_value(num_pos * self._neg_pos_ratio, clip_value_min=1, clip_value_max=conf_gt.shape[1]-1)
+        num_neg = tf.clip_by_value(num_pos * self._neg_pos_ratio, clip_value_min=tf.constant(1, dtype=tf.int64), clip_value_max=tf.cast(tf.shape(conf_gt)[1]-1, tf.int64))
 
         neutrals_indices = tf.where(conf_gt < 0 )
         mark = tf.tensor_scatter_nd_update(mark, neutrals_indices, tf.zeros(tf.shape(neutrals_indices)[0])) # filter out neutrals (conf_gt = -1)
@@ -155,9 +155,9 @@ class YOLACTLoss(object):
 
         loss_conf = tf.reduce_sum(tf.nn.softmax_cross_entropy_with_logits(target_labels, target_logits)) #/ tf.cast(num_pos, tf.float32)
 
-        if loss_conf > 500:
-            import pdb
-            pdb.set_trace()
+        # if loss_conf > 500:
+        #     import pdb
+        #     pdb.set_trace()
         return loss_conf
 
     def _loss_mask(self, prior_max_index, coef_p, proto_p, mask_gt, prior_max_box, conf_gt):
@@ -176,20 +176,20 @@ class YOLACTLoss(object):
             _pos_coef = tf.gather_nd(coef_p[i], pos_indices) #shape: [num_positives]
             _mask_gt = mask_gt[i]
 
-            if _pos_prior_index.shape[0] == 0: # num_positives are zero
+            if tf.shape(_pos_prior_index)[0] == 0: # num_positives are zero
                 continue
             
             # If exceeds the number of masks for training, select a random subset
-            old_num_pos = _pos_coef.shape[0]
+            old_num_pos = tf.shape(_pos_coef)[0]
             
             if old_num_pos > self._max_masks_for_train:
-                perm = tf.random.shuffle(tf.range(_pos_coef.shape[0]))
+                perm = tf.random.shuffle(tf.range(tf.shape(_pos_coef)[0]))
                 select = perm[:self._max_masks_for_train]
                 _pos_coef = tf.gather(_pos_coef, select)
                 _pos_prior_index = tf.gather(_pos_prior_index, select)
                 _pos_prior_box = tf.gather(_pos_prior_box, select)
                 
-            num_pos = _pos_coef.shape[0]
+            num_pos = tf.shape(_pos_coef)[0]
             _pos_mask_gt = tf.gather(_mask_gt, _pos_prior_index, axis=-1)  
             
             # mask assembly by linear combination
@@ -206,7 +206,7 @@ class YOLACTLoss(object):
             mask_loss = tf.reduce_sum(mask_loss, [0, 1]) / _area
             
             if old_num_pos > num_pos:
-                mask_loss *= old_num_pos / num_pos
+                mask_loss *= tf.cast(old_num_pos / num_pos, tf.float32)
 
             loss_m += tf.reduce_sum(mask_loss)
             
@@ -216,8 +216,11 @@ class YOLACTLoss(object):
 
     def _loss_semantic_segmentation(self, pred_seg, mask_gt, classes):
         # Note num_classes here is without the background class so cfg.num_classes-1
-        batch_size, mask_h, mask_w, num_classes = tf.shape(pred_seg)
-        loss_s = 0
+        batch_size = tf.shape(pred_seg)[0]
+        mask_h = tf.shape(pred_seg)[1]
+        mask_w = tf.shape(pred_seg)[2]
+        num_classes = tf.shape(pred_seg)[3]
+        loss_s = 0.0
 
         for i in range(batch_size):
             cur_segment = pred_seg[i]

@@ -96,16 +96,15 @@ def crop(mask_p, boxes, padding = 1):
         - mask_p should be a size [h, w, n] tensor of masks
         - boxes should be a size [n, 4] tensor of bbox coords in relative point form
     """
-    _h, _w, _n = tf.shape(mask_p)
 
-    x1, x2 = sanitize_coordinates(boxes[:, 1], boxes[:, 3], tf.cast(_w, tf.float32), padding)
-    y1, y2 = sanitize_coordinates(boxes[:, 0], boxes[:, 2], tf.cast(_h, tf.float32), padding)
+    x1, x2 = sanitize_coordinates(boxes[:, 1], boxes[:, 3], tf.cast(tf.shape(mask_p)[1], tf.float32), padding)
+    y1, y2 = sanitize_coordinates(boxes[:, 0], boxes[:, 2], tf.cast(tf.shape(mask_p)[0], tf.float32), padding)
 
-    rows = tf.reshape(tf.range(_h, dtype=x1.dtype), (-1, 1, 1))
-    cols = tf.reshape(tf.range(_w, dtype=x1.dtype), (1, -1, 1))
+    rows = tf.reshape(tf.range(tf.shape(mask_p)[0], dtype=x1.dtype), (-1, 1, 1))
+    cols = tf.reshape(tf.range(tf.shape(mask_p)[1], dtype=x1.dtype), (1, -1, 1))
 
-    cols = tf.broadcast_to(cols, (_h, _w, _n))
-    rows = tf.broadcast_to(rows, (_h, _w, _n))
+    cols = tf.broadcast_to(cols, (tf.shape(mask_p)[0], tf.shape(mask_p)[1], tf.shape(mask_p)[2]))
+    rows = tf.broadcast_to(rows, (tf.shape(mask_p)[0], tf.shape(mask_p)[1], tf.shape(mask_p)[2]))
 
     mask_left = tf.cast(cols, tf.float32) >= tf.reshape(x1, (1, 1, -1))
     mask_right = tf.cast(cols, tf.float32) <= tf.reshape(x2, (1, 1, -1))

@@ -56,13 +56,13 @@ class Yolact_LearningRateSchedule(tf.keras.optimizers.schedules.LearningRateSche
         learning_rate = 0.5 * learning_rate_base * (1 + tf.cos(
             np.pi *
             (tf.cast(global_step, tf.float32) - warmup_steps - hold_base_rate_steps
-            ) / float(total_steps - warmup_steps - hold_base_rate_steps)))
+            ) / tf.cast(total_steps - warmup_steps - hold_base_rate_steps, tf.float32)))
         if hold_base_rate_steps > 0:
           learning_rate = tf.where(
               global_step > warmup_steps + hold_base_rate_steps,
               learning_rate, learning_rate_base)
-        if warmup_steps > 0:
-          if learning_rate_base < warmup_learning_rate:
+        if self.warmup_step > 0:
+          if self.initial_lr < self.warmup_lr:
             raise ValueError('learning_rate_base must be larger or equal to '
                              'warmup_learning_rate.')
           slope = (learning_rate_base - warmup_learning_rate) / warmup_steps

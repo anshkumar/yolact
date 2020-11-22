@@ -1,7 +1,7 @@
 import datetime
 import contextlib
 import tensorflow as tf
-tf.config.experimental_run_functions_eagerly(True)
+# tf.config.experimental_run_functions_eagerly(True)
 # tf.debugging.enable_check_numerics()
 
 # it s recommanded to use absl for tf 2.0
