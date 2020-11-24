@@ -1,7 +1,7 @@
 import datetime
 import contextlib
 import tensorflow as tf
-# tf.config.experimental_run_functions_eagerly(True)
+tf.config.experimental_run_functions_eagerly(True)
 # tf.debugging.enable_check_numerics()
 
 # it s recommanded to use absl for tf 2.0
@@ -161,9 +161,8 @@ def main(argv):
     lr_schedule = learning_rate_schedule.Yolact_LearningRateSchedule(warmup_steps=5000, warmup_lr=1e-4,
                                                                      initial_lr=FLAGS.lr, total_steps=FLAGS.total_steps)
     logging.info("Initiate the Optimizer and Loss function...")
-    # optimizer = tf.keras.optimizers.SGD(learning_rate=lr_schedule, momentum=FLAGS.momentum)
-    # lr_schedule = tf.keras.experimental.CosineDecay(FLAGS.lr, FLAGS.decay_steps)
-    optimizer = tf.keras.optimizers.Adam(learning_rate=lr_schedule)
+    optimizer = tf.keras.optimizers.SGD(learning_rate=lr_schedule, momentum=FLAGS.momentum)
+    # optimizer = tf.keras.optimizers.Adam(learning_rate=lr_schedule)
     criterion = loss_yolact.YOLACTLoss()
     train_loss = tf.keras.metrics.Mean('train_loss', dtype=tf.float32)
     valid_loss = tf.keras.metrics.Mean('valid_loss', dtype=tf.float32)
@@ -293,8 +292,8 @@ def main(argv):
                 # Saving the weights:
                 best_val = valid_loss.result()
                 model.save_weights('./weights/weights_' + str(valid_loss.result().numpy()) + '.h5')
-                call_output = model.call.get_concrete_function(tf.TensorSpec([None, None, None, 3], tf.float32))
-                tf.saved_model.save(model, './saved_models/saved_model_'+ str(valid_loss.result().numpy()), signatures={'serving_default': call_output})
+                # call_output = model.call.get_concrete_function(tf.TensorSpec([None, None, None, 3], tf.float32))
+                # tf.saved_model.save(model, './saved_models/saved_model_'+ str(valid_loss.result().numpy()), signatures={'serving_default': call_output})
 
             # reset the metrics
             train_loss.reset_states()

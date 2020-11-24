@@ -110,7 +110,7 @@ class YOLACTLoss(object):
 
         return tf.reduce_sum(loss)
 
-    def _loss_class(self, pred_cls, num_cls, conf_gt, ohem_use_most_confident=True):
+    def _loss_class(self, pred_cls, num_cls, conf_gt, ohem_use_most_confident=False):
         # num_cls includes background
         batch_conf = tf.reshape(pred_cls, [-1, num_cls])
         batch_conf_max = tf.math.reduce_max(pred_cls)

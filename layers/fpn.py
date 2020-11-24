@@ -13,10 +13,12 @@ class FeaturePyramidNeck(tf.keras.layers.Layer):
         self.upSample = tf.keras.layers.UpSampling2D(size=(2, 2), interpolation='bilinear')
 
         # no Relu for downsample layer
-        self.downSample1 = tf.keras.layers.Conv2D(num_fpn_filters, (3, 3), 2, padding="same",
+        self.pad1 = tf.keras.layers.ZeroPadding2D(padding=(1,1))
+        self.downSample1 = tf.keras.layers.Conv2D(num_fpn_filters, (3, 3), 2, padding="valid",
                                                   kernel_initializer=tf.keras.initializers.glorot_uniform())
 
-        self.downSample2 = tf.keras.layers.Conv2D(num_fpn_filters, (3, 3), 2, padding="same",
+        self.pad2 = tf.keras.layers.ZeroPadding2D(padding=(1,1))
+        self.downSample2 = tf.keras.layers.Conv2D(num_fpn_filters, (3, 3), 2, padding="valid",
                                                   kernel_initializer=tf.keras.initializers.glorot_uniform())
 
         self.lateralCov1 = tf.keras.layers.Conv2D(num_fpn_filters, (1, 1), 1, padding="same",
@@ -39,9 +41,13 @@ class FeaturePyramidNeck(tf.keras.layers.Layer):
 
     def call(self, c3, c4, c5):
         # lateral conv for c3 c4 c5
+        # pytorch input  (N,Cin,Hin,Win) 
+        # tf input (N,Hin,Win,Cin) 
         p5 = self.lateralCov1(c5)
-        p4 = self._crop_and_add(self.upSample(p5), self.lateralCov2(c4))
-        p3 = self._crop_and_add(self.upSample(p4), self.lateralCov3(c3))
+        _, h, w, _ = tf.shape(c4)
+        p4 = tf.add(tf.image.resize(p5, [h,w]), self.lateralCov2(c4))
+        _, h, w, _ = tf.shape(c3)
+        p3 = tf.add(tf.image.resize(p4, [h,w]), self.lateralCov3(c3))
         # print("p3: ", p3.shape)
 
         # smooth pred layer for p3, p4, p5
@@ -50,8 +56,8 @@ class FeaturePyramidNeck(tf.keras.layers.Layer):
         p5 = self.predictP5(p5)
 
         # downsample conv to get p6, p7
-        p6 = self.downSample1(p5)
-        p7 = self.downSample2(p6)
+        p6 = self.downSample1(self.pad1(p5))
+        p7 = self.downSample2(self.pad2(p6))
 
         return [p3, p4, p5, p6, p7]
 

@@ -54,9 +54,14 @@ class Yolact(tf.keras.Model):
 
         self.num_anchor, self.priors = make_priors(img_h, img_w, self.feature_map_size, aspect_ratio, scales)
         # print("prior shape:", self.priors.shape)
-        # print("num anchor per feature map: ", self.num_anchor)
+        print("num anchor per feature map: ", self.num_anchor)
 
         # shared prediction head
+        # Here, len(aspect_ratio) is passed as during prior calculations, individula scale is selected for each layer.
+        # So, when scale are [24, 48, 96, 130, 192] that means 24 is for p3; 48 is for p4 and so on.
+        # So, number of priors for that layer will be HxWxlen(aspect_ratio)
+        # Hence, passing len(aspect_ratio)
+        # This implementation differs from the original used in yolact
         self.predictionHead = PredictionModule(256, len(aspect_ratio), num_class, num_mask)
 
     def set_bn(self, mode='train'):
@@ -72,8 +77,6 @@ class Yolact(tf.keras.Model):
     @tf.function(input_signature=[tf.TensorSpec([None, None, None, 3], tf.float32)])
     def call(self, inputs):
         # backbone(ResNet + FPN)
-        import pdb
-        # pdb.set_trace()
         c3, c4, c5 = self.backbone_resnet(inputs)
         fpn_out = self.backbone_fpn(c3, c4, c5)
 
