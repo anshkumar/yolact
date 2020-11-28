@@ -1,7 +1,7 @@
 import datetime
 import contextlib
 import tensorflow as tf
-tf.config.experimental_run_functions_eagerly(True)
+# tf.config.experimental_run_functions_eagerly(True)
 # tf.debugging.enable_check_numerics()
 
 # it s recommanded to use absl for tf 2.0
@@ -49,47 +49,18 @@ flags.DEFINE_float('momentum', 0.9,
                    'momentum')
 flags.DEFINE_float('weight_decay', 5 * 1e-4,
                    'weight_decay')
-flags.DEFINE_float('print_interval', 1,
+flags.DEFINE_float('print_interval', 100,
                    'number of iteration between printing loss')
-flags.DEFINE_float('save_interval', 100,
+flags.DEFINE_float('save_interval', 10000,
                    'number of iteration between saving model(checkpoint)')
 flags.DEFINE_float('valid_iter', 10,
-                   'number of iteration between saving validation weights')
+                   'number of iteration during validation')
 
 def _get_categories_list():
   return [{
       'id': 1,
       'name': 'potato'
   }]
-
-@tf.function
-def train_step(model,
-               loss_fn,
-               metrics,
-               optimizer,
-               image,
-               labels):
-    # training using tensorflow gradient tape
-    with tf.GradientTape() as tape:
-        output = model(image, training=True)
-        loc_loss, conf_loss, mask_loss, seg_loss, total_loss = loss_fn(output, labels, FLAGS.num_class+1)
-    grads = tape.gradient(total_loss, model.trainable_variables)
-    optimizer.apply_gradients(zip(grads, model.trainable_variables))
-    metrics.update_state(total_loss)
-    return loc_loss, conf_loss, mask_loss, seg_loss
-
-
-@tf.function
-def valid_step(model,
-               loss_fn,
-               metrics,
-               image,
-               labels):
-    output = model(image, training=False)
-    loc_loss, conf_loss, mask_loss, seg_loss, total_loss = loss_fn(output, labels, FLAGS.num_class+1)
-    metrics.update_state(total_loss)
-    return output, loc_loss, conf_loss, mask_loss, seg_loss
-
 
 def main(argv):
     # set up Grappler for graph optimization
@@ -230,8 +201,13 @@ def main(argv):
                       'loop_optimization': True,
                       'arithmetic_optimization': True,
                       'remapping': True}):
-            loc_loss, conf_loss, mask_loss, seg_loss = train_step(model, criterion, train_loss, optimizer, image,
-                                                                  labels)
+            with tf.GradientTape() as tape:
+                output = model(image, training=True)
+                loc_loss, conf_loss, mask_loss, seg_loss, total_loss = criterion(output, labels, FLAGS.num_class+1)
+            grads = tape.gradient(total_loss, model.trainable_variables)
+            optimizer.apply_gradients(zip(grads, model.trainable_variables))
+            train_loss.update_state(total_loss)
+
         loc.update_state(loc_loss)
         conf.update_state(conf_loss)
         mask.update_state(mask_loss)
@@ -269,41 +245,60 @@ def main(argv):
                               'loop_optimization': True,
                               'arithmetic_optimization': True,
                               'remapping': True}):
-                    # output, valid_loc_loss, valid_conf_loss, valid_mask_loss, valid_seg_loss = valid_step(model,
-                    #                                                                               criterion,
-                    #                                                                               valid_loss,
-                    #                                                                               valid_image,
-                    #                                                                               valid_labels)
-
-                    output = model.predict(valid_image)
+                    output = model(valid_image, training=False)
                     valid_loc_loss, valid_conf_loss, valid_mask_loss, valid_seg_loss, valid_total_loss = criterion(output, valid_labels, FLAGS.num_class+1)
                     valid_loss.update_state(valid_total_loss)
 
                     _h = valid_image.shape[1]
                     _w = valid_image.shape[2]
                     
-                    gt_num_box = valid_labels['num_obj'][0]
+                    gt_num_box = valid_labels['num_obj'][0].numpy()
                     gt_boxes = valid_labels['boxes_norm'][0][:gt_num_box]
-                    gt_boxes = gt_boxes*np.array([_h,_w,_h,_w])
-                    gt_classes = valid_labels['classes'][0][:gt_num_box]
-                    gt_masks = valid_labels['mask_target'][0][:gt_num_box]
+                    gt_boxes = gt_boxes.numpy()*np.array([_h,_w,_h,_w])
+                    gt_classes = valid_labels['classes'][0][:gt_num_box].numpy()
+                    gt_masks = valid_labels['mask_target'][0][:gt_num_box].numpy()
+
+                    gt_masked_image = np.zeros((gt_num_box, _h, _w))
+                    for _b in range(gt_num_box):
+                        _mask = gt_masks[_b].astype("uint8")
+                        _box = gt_boxes[_b] # [ymin, xmin, ymax, xmax ]
+                        (startY, startX, endY, endX) = _box.astype("int")
+                        boxW = endX - startX
+                        boxH = endY - startY
+                        _mask = cv2.resize(_mask, (boxW, boxH))
+                        gt_masked_image[_b][startY:endY, startX:endX] = _mask
 
                     coco_evaluator.add_single_ground_truth_image_info(
                         image_id='image'+str(valid_iter),
                         groundtruth_dict={
                             standard_fields.InputDataFields.groundtruth_boxes: gt_boxes,
                             standard_fields.InputDataFields.groundtruth_classes: gt_classes,
-                            standard_fields.InputDataFields.groundtruth_instance_masks: gt_masks
+                            standard_fields.InputDataFields.groundtruth_instance_masks: gt_masked_image
                         })
 
-                    det_num = output['num_detections'][0]
+                    det_num = output['num_detections'][0].numpy()
                     det_boxes = output['detection_boxes'][0][:det_num]
-                    det_boxes = det_boxes*np.array([_h,_w,_h,_w])
-                    det_masks = output['detection_masks'][0][:det_num]
+                    det_boxes = det_boxes.numpy()*np.array([_h,_w,_h,_w])
+                    det_masks = output['detection_masks'][0][:det_num].numpy()
+                    det_masks = det_masks[:,:,0]
                     det_masks = (det_masks > 0.5)
-                    det_masks = det_masks.astype("uint8")
-                    det_scores = output['detection_scores'][0][:det_num]
-                    det_classes = output['detection_classes'][0][:det_num]
+
+                    det_scores = output['detection_scores'][0][:det_num].numpy()
+                    det_classes = output['detection_classes'][0][:det_num].numpy()
+
+                    det_masked_image = np.zeros((det_num, _h, _w))
+                    for _b in range(det_num):
+                        _mask = det_masks[_b].astype("uint8")
+                        _box = det_boxes[_b] # [ymin, xmin, ymax, xmax ]
+                        (startY, startX, endY, endX) = _box.astype("int")
+                        boxW = endX - startX
+                        boxH = endY - startY
+                        if boxW == 0:
+                            boxW = 1
+                        if boxH == 0:
+                            boxH = 1
+                        _mask = cv2.resize(_mask, (boxW, boxH))
+                        det_masked_image[_b][startY:endY, startX:endX] = _mask
                     
                     coco_evaluator.add_single_detected_image_info(
                         image_id='image'+str(valid_iter),
@@ -311,7 +306,7 @@ def main(argv):
                             standard_fields.DetectionResultFields.detection_boxes: det_boxes,
                             standard_fields.DetectionResultFields.detection_scores: det_scores,
                             standard_fields.DetectionResultFields.detection_classes: det_classes,
-                            standard_fields.DetectionResultFields.detection_masks: det_masks[:, :, :, 0]
+                            standard_fields.DetectionResultFields.detection_masks: det_masked_image
                         })
 
                 v_loc.update_state(valid_loc_loss)

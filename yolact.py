@@ -61,6 +61,7 @@ class Yolact(tf.keras.Model):
         # post-processing for evaluation
         self.detect = Detect(num_class, bkg_label=0, top_k=200,
                 conf_thresh=0.05, nms_thresh=0.5)
+        self.max_output_size = 300
 
     def set_bn(self, mode='train'):
         if mode == 'train':
@@ -72,8 +73,8 @@ class Yolact(tf.keras.Model):
                 if isinstance(layer, tf.keras.layers.BatchNormalization):
                     layer.trainable = True
 
-    @tf.function(input_signature=[tf.TensorSpec([None, None, None, 3], tf.float32), tf.TensorSpec([None], tf.bool)])
-    def call(self, inputs, training):
+    @tf.function
+    def call(self, inputs, training=False):
         # backbone(ResNet + FPN)
         c3, c4, c5 = self.backbone_resnet(inputs)
         fpn_out = self.backbone_fpn(c3, c4, c5)
@@ -111,6 +112,14 @@ class Yolact(tf.keras.Model):
                 'seg': seg,
                 'priors': self.priors
             }
+            # Following to make both `if` and `else` return structure same
+            result = {
+                'detection_boxes': tf.zeros((self.max_output_size, 4)),
+                'detection_classes': tf.zeros((self.max_output_size)), 
+                'detection_scores': tf.zeros((self.max_output_size)), 
+                'detection_masks': tf.zeros((self.max_output_size, 30, 30, 1)), 
+                'num_detections': tf.constant(0)}
+            pred.update(result)
         else:
             pred = {
                 'pred_cls': tf.nn.softmax(pred_cls, axis=-1),
