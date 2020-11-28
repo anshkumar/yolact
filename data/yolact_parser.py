@@ -71,10 +71,10 @@ class Parser(object):
         image = tf.image.resize(image, [self._output_size_h, self._output_size_w])
 
         #########################
-        _mean = tf.constant([103.94, 116.78, 123.68])
-        _std = tf.constant([57.38, 57.12, 58.40])
-        image = tf.image.convert_image_dtype(image, dtype=tf.float32)
-        image = (image - _mean) / _std
+        # _mean = tf.constant([103.94, 116.78, 123.68])
+        # _std = tf.constant([57.38, 57.12, 58.40])
+        # image = tf.image.convert_image_dtype(image, dtype=tf.float32)
+        # image = (image - _mean) / _std
 
         # convert image to range [0, 1]
         # https://github.com/tensorflow/tensorflow/issues/33892
@@ -106,6 +106,7 @@ class Parser(object):
         all_offsets, conf_gt, prior_max_box, prior_max_index = self._anchor_instance.matching(
             self._match_threshold, self._unmatched_threshold, boxes, classes)
 
+        boxes_norm = boxes
         # remember to unnormalized the bbox
         # [ymin, xmin, ymax, xmax ]
         boxes = boxes * [self._output_size_h, self._output_size_w, self._output_size_h , self._output_size_w]
@@ -114,7 +115,7 @@ class Parser(object):
         num_obj = tf.size(classes)
 
         # resized boxes for proto output size
-        boxes_norm = boxes * [self._proto_output_size[0] / self._output_size_h, self._proto_output_size[1] / self._output_size_w, self._proto_output_size[0] / self._output_size_h, self._proto_output_size[1] / self._output_size_w]
+        # boxes_norm = boxes * [self._proto_output_size[0] / self._output_size_h, self._proto_output_size[1] / self._output_size_w, self._proto_output_size[0] / self._output_size_h, self._proto_output_size[1] / self._output_size_w]
 
 
         # Padding classes and mask to fix length [None, num_max_fix_padding, ...]
@@ -136,7 +137,7 @@ class Parser(object):
             'conf_gt': conf_gt,
             'prior_max_box': prior_max_box,
             'prior_max_index': prior_max_index,
-            'bbox_for_norm': boxes_norm,
+            'boxes_norm': boxes_norm,
             'classes': classes,
             'num_obj': num_obj,
             'mask_target': masks,

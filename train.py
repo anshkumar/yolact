@@ -13,6 +13,11 @@ import yolact
 from data import dataset_coco
 from loss import loss_yolact
 from utils import learning_rate_schedule
+from utils import coco_evaluation
+from utils import standard_fields
+
+import numpy as np
+import cv2
 
 tf.random.set_seed(1234)
 
@@ -24,7 +29,7 @@ flags.DEFINE_string('weights', './weights',
                     'path to store weights')
 flags.DEFINE_integer('train_iter', 800000,
                      'iteraitons')
-flags.DEFINE_integer('batch_size', 8,
+flags.DEFINE_integer('batch_size', 1,
                      'train batch size')
 flags.DEFINE_integer('num_class', 10,
                      'number of class')
@@ -44,13 +49,18 @@ flags.DEFINE_float('momentum', 0.9,
                    'momentum')
 flags.DEFINE_float('weight_decay', 5 * 1e-4,
                    'weight_decay')
-flags.DEFINE_float('print_interval', 100,
+flags.DEFINE_float('print_interval', 1,
                    'number of iteration between printing loss')
-flags.DEFINE_float('save_interval', 10000,
+flags.DEFINE_float('save_interval', 100,
                    'number of iteration between saving model(checkpoint)')
 flags.DEFINE_float('valid_iter', 10,
                    'number of iteration between saving validation weights')
 
+def _get_categories_list():
+  return [{
+      'id': 1,
+      'name': 'potato'
+  }]
 
 @tf.function
 def train_step(model,
@@ -78,7 +88,7 @@ def valid_step(model,
     output = model(image, training=False)
     loc_loss, conf_loss, mask_loss, seg_loss, total_loss = loss_fn(output, labels, FLAGS.num_class+1)
     metrics.update_state(total_loss)
-    return loc_loss, conf_loss, mask_loss, seg_loss
+    return output, loc_loss, conf_loss, mask_loss, seg_loss
 
 
 def main(argv):
@@ -202,6 +212,9 @@ def main(argv):
     else:
         logging.info("Initializing from scratch.")
 
+    # COCO evalator for showing MAP
+    coco_evaluator = coco_evaluation.CocoMaskEvaluator(_get_categories_list())
+
     best_val = 1e10
     iterations = checkpoint.step.numpy()
 
@@ -256,16 +269,59 @@ def main(argv):
                               'loop_optimization': True,
                               'arithmetic_optimization': True,
                               'remapping': True}):
-                    valid_loc_loss, valid_conf_loss, valid_mask_loss, valid_seg_loss = valid_step(model,
-                                                                                                  criterion,
-                                                                                                  valid_loss,
-                                                                                                  valid_image,
-                                                                                                  valid_labels)
+                    # output, valid_loc_loss, valid_conf_loss, valid_mask_loss, valid_seg_loss = valid_step(model,
+                    #                                                                               criterion,
+                    #                                                                               valid_loss,
+                    #                                                                               valid_image,
+                    #                                                                               valid_labels)
+
+                    output = model.predict(valid_image)
+                    valid_loc_loss, valid_conf_loss, valid_mask_loss, valid_seg_loss, valid_total_loss = criterion(output, valid_labels, FLAGS.num_class+1)
+                    valid_loss.update_state(valid_total_loss)
+
+                    _h = valid_image.shape[1]
+                    _w = valid_image.shape[2]
+                    
+                    gt_num_box = valid_labels['num_obj'][0]
+                    gt_boxes = valid_labels['boxes_norm'][0][:gt_num_box]
+                    gt_boxes = gt_boxes*np.array([_h,_w,_h,_w])
+                    gt_classes = valid_labels['classes'][0][:gt_num_box]
+                    gt_masks = valid_labels['mask_target'][0][:gt_num_box]
+
+                    coco_evaluator.add_single_ground_truth_image_info(
+                        image_id='image'+str(valid_iter),
+                        groundtruth_dict={
+                            standard_fields.InputDataFields.groundtruth_boxes: gt_boxes,
+                            standard_fields.InputDataFields.groundtruth_classes: gt_classes,
+                            standard_fields.InputDataFields.groundtruth_instance_masks: gt_masks
+                        })
+
+                    det_num = output['num_detections'][0]
+                    det_boxes = output['detection_boxes'][0][:det_num]
+                    det_boxes = det_boxes*np.array([_h,_w,_h,_w])
+                    det_masks = output['detection_masks'][0][:det_num]
+                    det_masks = (det_masks > 0.5)
+                    det_masks = det_masks.astype("uint8")
+                    det_scores = output['detection_scores'][0][:det_num]
+                    det_classes = output['detection_classes'][0][:det_num]
+                    
+                    coco_evaluator.add_single_detected_image_info(
+                        image_id='image'+str(valid_iter),
+                        detections_dict={
+                            standard_fields.DetectionResultFields.detection_boxes: det_boxes,
+                            standard_fields.DetectionResultFields.detection_scores: det_scores,
+                            standard_fields.DetectionResultFields.detection_classes: det_classes,
+                            standard_fields.DetectionResultFields.detection_masks: det_masks[:, :, :, 0]
+                        })
+
                 v_loc.update_state(valid_loc_loss)
                 v_conf.update_state(valid_conf_loss)
                 v_mask.update_state(valid_mask_loss)
                 v_seg.update_state(valid_seg_loss)
                 valid_iter += 1
+
+            metrics = coco_evaluator.evaluate()
+            coco_evaluator.clear()
 
             with test_summary_writer.as_default():
                 tf.summary.scalar('V Total loss', valid_loss.result(), step=iterations)

@@ -13,6 +13,9 @@ class FeaturePyramidNeck(tf.keras.layers.Layer):
         self.upSample = tf.keras.layers.UpSampling2D(size=(2, 2), interpolation='bilinear')
 
         # no Relu for downsample layer
+        # Pytorch and tf differs in conv2d when stride > 1
+        # https://dmolony3.github.io/Pytorch-to-Tensorflow.html
+        # Hence, manually adding padding
         self.pad1 = tf.keras.layers.ZeroPadding2D(padding=(1,1))
         self.downSample1 = tf.keras.layers.Conv2D(num_fpn_filters, (3, 3), 2, padding="valid",
                                                   kernel_initializer=tf.keras.initializers.glorot_uniform())
@@ -44,10 +47,10 @@ class FeaturePyramidNeck(tf.keras.layers.Layer):
         # pytorch input  (N,Cin,Hin,Win) 
         # tf input (N,Hin,Win,Cin) 
         p5 = self.lateralCov1(c5)
-        _, h, w, _ = tf.shape(c4)
-        p4 = tf.add(tf.image.resize(p5, [h,w]), self.lateralCov2(c4))
-        _, h, w, _ = tf.shape(c3)
-        p3 = tf.add(tf.image.resize(p4, [h,w]), self.lateralCov3(c3))
+        # _, h, w, _ = tf.shape(c4)
+        p4 = tf.add(tf.image.resize(p5, [tf.shape(c4)[1],tf.shape(c4)[2]]), self.lateralCov2(c4))
+        # _, h, w, _ = tf.shape(c3)
+        p3 = tf.add(tf.image.resize(p4, [tf.shape(c3)[1],tf.shape(c3)[2]]), self.lateralCov3(c3))
         # print("p3: ", p3.shape)
 
         # smooth pred layer for p3, p4, p5
@@ -61,14 +64,3 @@ class FeaturePyramidNeck(tf.keras.layers.Layer):
 
         return [p3, p4, p5, p6, p7]
 
-    def _crop_and_add(self, x1, x2):
-        """
-        for p4, c4; p3, c3 to concatenate with matched shape
-        https://tf-unet.readthedocs.io/en/latest/_modules/tf_unet/layers.html
-        """
-        x1_shape = x1.shape
-        x2_shape = x2.shape
-        offsets = [0, (x1_shape[1] - x2_shape[1]) // 2, (x1_shape[2] - x2_shape[2]) // 2, 0]
-        size = [-1, x2_shape[1], x2_shape[2], -1]
-        x1_crop = tf.slice(x1, offsets, size)
-        return tf.add(x1_crop, x2)

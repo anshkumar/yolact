@@ -48,7 +48,6 @@ class YOLACTLoss(object):
         prior_max_box = label['prior_max_box']
         prior_max_index = label['prior_max_index']
 
-        bbox_norm = label['bbox_for_norm']
         masks = label['mask_target']
         classes = label['classes']
         num_obj = label['num_obj']
@@ -72,7 +71,7 @@ class YOLACTLoss(object):
         # calculate the smoothL1(positive_pred, positive_gt) and return
         num_pos = tf.shape(gt_offset)[0]
         smoothl1loss = tf.keras.losses.Huber(delta=1., reduction=tf.losses.Reduction.NONE)
-        loss_loc = tf.reduce_sum(smoothl1loss(gt_offset, pred_offset)) #/ tf.cast(num_pos, tf.float32)
+        loss_loc = tf.reduce_sum(smoothl1loss(gt_offset, pred_offset)) / tf.cast(num_pos, tf.float32)
 
         return loss_loc
 
@@ -82,6 +81,7 @@ class YOLACTLoss(object):
         Note: To make things mesh easier, the network still predicts 81 class confidences in this mode.
               Because retinanet originally only predicts 80, we simply just don't use pred_cls[..., 0]
         """
+        num_pos = tf.math.count_nonzero(tf.greater(conf_gt,0), axis=1, keepdims=True)
         conf_gt = tf.reshape(conf_gt, -1) # [batch_size*num_priors]
         pred_cls = tf.reshape(pred_cls, [-1, num_cls]) # [batch_size*num_priors, num_classes]
 
@@ -108,34 +108,43 @@ class YOLACTLoss(object):
 
         loss = tf.gather_nd(tf.reduce_sum(loss, -1), keep)
 
-        return tf.reduce_sum(loss)
+        return tf.reduce_sum(loss) / tf.cast(num_pos, tf.float32)
 
     def _loss_class(self, pred_cls, num_cls, conf_gt, ohem_use_most_confident=False):
         # num_cls includes background
         batch_conf = tf.reshape(pred_cls, [-1, num_cls])
-        batch_conf_max = tf.math.reduce_max(pred_cls)
 
         # Hard Negative Mining
-        if ohem_use_most_confident:
-        # i.e. max(softmax) along classes > 0 
+        # Using tf.nn.softmax or tf.math.log(tf.math.reduce_sum(tf.math.exp(batch_conf), 1)) to calculate log_sum_exp
+        # might cause NaN problem. This is a known problem https://github.com/tensorflow/tensorflow/issues/10142
+        # To get around this using tf.math.reduce_logsumexp and softmax_cross_entropy_with_logit
+        if ohem_use_most_confident: # i.e. max(softmax) along classes > 0 
+        # Avoid using this.
+        # This might cause NaN as tf.nn.softmax does not handle overflows and underflows
             batch_conf = tf.nn.softmax(batch_conf, axis=1)
-            mark = tf.math.reduce_max(batch_conf[:, 1:], axis=1)
+            loss_c = tf.math.reduce_max(batch_conf[:, 1:], axis=1)
         else:
             # This will be used to determine unaveraged confidence loss across all examples in a batch.
             # https://github.com/dbolya/yolact/blob/b97e82d809e5e69dc628930070a44442fd23617a/layers/modules/multibox_loss.py#L251
             # https://github.com/dbolya/yolact/blob/b97e82d809e5e69dc628930070a44442fd23617a/layers/box_utils.py#L316
-            mark = tf.math.log(tf.math.reduce_sum(tf.math.exp(batch_conf-batch_conf_max), 1)) + batch_conf_max - batch_conf[:,0]
+            # log_sum_exp = tf.math.log(tf.math.reduce_sum(tf.math.exp(batch_conf), 1))
 
-        mark = tf.reshape(mark, (tf.shape(pred_cls)[0], -1))  # (batch_size, 27429)
+            # Using inbuild reduce_logsumexp to avoid NaN
+            # This function is more numerically stable than log(sum(exp(input))). It avoids overflows caused by taking the exp of large inputs and underflows caused by taking the log of small inputs.
+            log_sum_exp = tf.math.reduce_logsumexp(batch_conf, 1)
+            # tf.print(log_sum_exp)
+            loss_c = log_sum_exp - batch_conf[:,0]
+
+        loss_c = tf.reshape(loss_c, (tf.shape(pred_cls)[0], -1))  # (batch_size, 27429)
         pos_indices = tf.where(conf_gt > 0 )
-        mark = tf.tensor_scatter_nd_update(mark, pos_indices, tf.zeros(tf.shape(pos_indices)[0])) # filter out pos boxes
+        loss_c = tf.tensor_scatter_nd_update(loss_c, pos_indices, tf.zeros(tf.shape(pos_indices)[0])) # filter out pos boxes
         num_pos = tf.math.count_nonzero(tf.greater(conf_gt,0), axis=1, keepdims=True)
         num_neg = tf.clip_by_value(num_pos * self._neg_pos_ratio, clip_value_min=tf.constant(1, dtype=tf.int64), clip_value_max=tf.cast(tf.shape(conf_gt)[1]-1, tf.int64))
 
         neutrals_indices = tf.where(conf_gt < 0 )
-        mark = tf.tensor_scatter_nd_update(mark, neutrals_indices, tf.zeros(tf.shape(neutrals_indices)[0])) # filter out neutrals (conf_gt = -1)
+        loss_c = tf.tensor_scatter_nd_update(loss_c, neutrals_indices, tf.zeros(tf.shape(neutrals_indices)[0])) # filter out neutrals (conf_gt = -1)
 
-        idx = tf.argsort(mark, axis=1, direction='DESCENDING')
+        idx = tf.argsort(loss_c, axis=1, direction='DESCENDING')
         idx_rank = tf.argsort(idx, axis=1)
 
         # Just in case there aren't enough negatives, don't start using positives as negatives
@@ -153,11 +162,8 @@ class YOLACTLoss(object):
         target_labels = tf.concat([pos_gt_for_loss, neg_gt_for_loss], axis=0)
         target_labels = tf.one_hot(tf.squeeze(target_labels), depth=num_cls)
 
-        loss_conf = tf.reduce_sum(tf.nn.softmax_cross_entropy_with_logits(target_labels, target_logits)) #/ tf.cast(num_pos, tf.float32)
+        loss_conf = tf.reduce_sum(tf.nn.softmax_cross_entropy_with_logits(target_labels, target_logits)) / tf.cast(num_pos, tf.float32)
 
-        # if loss_conf > 500:
-        #     import pdb
-        #     pdb.set_trace()
         return loss_conf
 
     def _loss_mask(self, prior_max_index, coef_p, proto_p, mask_gt, prior_max_box, conf_gt):
@@ -208,11 +214,11 @@ class YOLACTLoss(object):
             if old_num_pos > num_pos:
                 mask_loss *= tf.cast(old_num_pos / num_pos, tf.float32)
 
-            loss_m += tf.reduce_sum(mask_loss)
+            loss_m += tf.reduce_sum(mask_loss) / tf.cast(num_pos, tf.float32)
             
         loss_m /= (tf.cast(proto_h, tf.float32) * tf.cast(proto_w, tf.float32))
 
-        return loss_m
+        return loss_m 
 
     def _loss_semantic_segmentation(self, pred_seg, mask_gt, classes):
         # Note num_classes here is without the background class so cfg.num_classes-1
@@ -241,4 +247,5 @@ class YOLACTLoss(object):
 
             loss_s += tf.reduce_sum(tf.nn.sigmoid_cross_entropy_with_logits(segment_gt[:,:,1:], cur_segment)) #exclude background from segment_gt
 
-        return loss_s / tf.cast(mask_h, tf.float32) / tf.cast(mask_w, tf.float32)
+        loss_s /= (tf.cast(mask_h, tf.float32) * tf.cast(mask_w, tf.float32))
+        return loss_s/ tf.cast(batch_size, tf.float32)

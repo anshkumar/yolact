@@ -1,9 +1,3 @@
-"""
-YOLACT:Real-time Instance Segmentation
-Ref: https://arxiv.org/abs/1904.02689
-
-Arthor: HSU, CHIHCHAO, vedanshu
-"""
 import tensorflow as tf
 
 from layers.fpn import FeaturePyramidNeck
@@ -12,7 +6,7 @@ from layers.protonet import ProtoNet
 from utils.create_prior import make_priors
 import numpy as np
 assert tf.__version__.startswith('2')
-
+from detection import Detect
 
 class Yolact(tf.keras.Model):
     """
@@ -54,7 +48,7 @@ class Yolact(tf.keras.Model):
 
         self.num_anchor, self.priors = make_priors(img_h, img_w, self.feature_map_size, aspect_ratio, scales)
         # print("prior shape:", self.priors.shape)
-        print("num anchor per feature map: ", self.num_anchor)
+        # print("num anchor per feature map: ", self.num_anchor)
 
         # shared prediction head
         # Here, len(aspect_ratio) is passed as during prior calculations, individula scale is selected for each layer.
@@ -63,6 +57,10 @@ class Yolact(tf.keras.Model):
         # Hence, passing len(aspect_ratio)
         # This implementation differs from the original used in yolact
         self.predictionHead = PredictionModule(256, len(aspect_ratio), num_class, num_mask)
+
+        # post-processing for evaluation
+        self.detect = Detect(num_class, bkg_label=0, top_k=200,
+                conf_thresh=0.05, nms_thresh=0.5)
 
     def set_bn(self, mode='train'):
         if mode == 'train':
@@ -74,8 +72,8 @@ class Yolact(tf.keras.Model):
                 if isinstance(layer, tf.keras.layers.BatchNormalization):
                     layer.trainable = True
 
-    @tf.function(input_signature=[tf.TensorSpec([None, None, None, 3], tf.float32)])
-    def call(self, inputs):
+    @tf.function(input_signature=[tf.TensorSpec([None, None, None, 3], tf.float32), tf.TensorSpec([None], tf.bool)])
+    def call(self, inputs, training):
         # backbone(ResNet + FPN)
         c3, c4, c5 = self.backbone_resnet(inputs)
         fpn_out = self.backbone_fpn(c3, c4, c5)
@@ -104,13 +102,25 @@ class Yolact(tf.keras.Model):
         pred_offset = tf.concat(pred_offset, axis=1)
         pred_mask_coef = tf.concat(pred_mask_coef, axis=1)
 
-        pred = {
-            'pred_cls': pred_cls,
-            'pred_offset': pred_offset,
-            'pred_mask_coef': pred_mask_coef,
-            'proto_out': protonet_out,
-            'seg': seg,
-            'priors': self.priors
-        }
+        if training:
+            pred = {
+                'pred_cls': pred_cls,
+                'pred_offset': pred_offset,
+                'pred_mask_coef': pred_mask_coef,
+                'proto_out': protonet_out,
+                'seg': seg,
+                'priors': self.priors
+            }
+        else:
+            pred = {
+                'pred_cls': tf.nn.softmax(pred_cls, axis=-1),
+                'pred_offset': pred_offset,
+                'pred_mask_coef': pred_mask_coef,
+                'proto_out': protonet_out,
+                'seg': seg,
+                'priors': self.priors
+            }
+
+            pred.update(self.detect(pred))
 
         return pred
