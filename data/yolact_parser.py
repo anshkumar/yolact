@@ -91,17 +91,16 @@ class Parser(object):
         masks = tf.image.resize(masks, [self._proto_output_size[0], self._proto_output_size[1]],
                                 method=tf.image.ResizeMethod.BILINEAR)
         # Mask values should only be either 0 or 1
-        masks = tf.cast(masks + 0.5, tf.int64)
-        masks = tf.squeeze(masks)
-        masks = tf.cast(masks, tf.float32)
+        masks = tf.cast(masks + 0.5, tf.uint8)
 
         # Todo: SSD data augmentation (Photometrics, expand, sample_crop, mirroring)
         # data augmentation randomly
         if augment:
             image, boxes, masks, classes = augmentation.random_augmentation(image, boxes, masks, [self._output_size_h, self._output_size_w],
                                                                         self._proto_output_size, classes)
-
-
+        masks = tf.squeeze(masks)
+        masks = tf.cast(masks, tf.float32)
+        
         # matching anchors
         all_offsets, conf_gt, prior_max_box, prior_max_index = self._anchor_instance.matching(
             self._match_threshold, self._unmatched_threshold, boxes, classes)

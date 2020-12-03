@@ -49,7 +49,7 @@ flags.DEFINE_float('momentum', 0.9,
                    'momentum')
 flags.DEFINE_float('weight_decay', 5 * 1e-4,
                    'weight_decay')
-flags.DEFINE_float('print_interval', 100,
+flags.DEFINE_float('print_interval', 1,
                    'number of iteration between printing loss')
 flags.DEFINE_float('save_interval', 10000,
                    'number of iteration between saving model(checkpoint)')
@@ -261,12 +261,8 @@ def main(argv):
                     gt_masked_image = np.zeros((gt_num_box, _h, _w))
                     for _b in range(gt_num_box):
                         _mask = gt_masks[_b].astype("uint8")
-                        _box = gt_boxes[_b] # [ymin, xmin, ymax, xmax ]
-                        (startY, startX, endY, endX) = _box.astype("int")
-                        boxW = endX - startX
-                        boxH = endY - startY
-                        _mask = cv2.resize(_mask, (boxW, boxH))
-                        gt_masked_image[_b][startY:endY, startX:endX] = _mask
+                        _mask = cv2.resize(_mask, (_w, _h))
+                        gt_masked_image[_b] = _mask
 
                     coco_evaluator.add_single_ground_truth_image_info(
                         image_id='image'+str(valid_iter),

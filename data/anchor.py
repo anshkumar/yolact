@@ -30,7 +30,7 @@ class Anchor(object):
         prior_boxes = []
         num_anchors = 0
         for idx, f_size in enumerate(feature_map_size):
-            # print("Create priors for f_size:%s", f_size)
+            print("Create priors for f_size: ", f_size, " aspect_ratio: ",aspect_ratio, " scale: ", scale)
             count_anchor = 0
             for j, i in product(range(int(f_size[0])), range(int(f_size[1]))):
                 # i,j are pixels values in feature map
