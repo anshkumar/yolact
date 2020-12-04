@@ -8,6 +8,10 @@ import numpy as np
 assert tf.__version__.startswith('2')
 from detection import Detect
 
+class FrozenBatchNormalization(tf.keras.layers.BatchNormalization):
+    def call(self, inputs, training=None):
+        return super().call(inputs=inputs, training=False)
+
 class Yolact(tf.keras.Model):
     """
         Creating the YOLCAT Architecture
@@ -19,7 +23,9 @@ class Yolact(tf.keras.Model):
         super(Yolact, self).__init__()
         out = ['conv3_block4_out', 'conv4_block6_out', 'conv5_block3_out']
         # use pre-trained ResNet50
-        # Todo figure out how pre-trained can be train again
+        # Keras BatchNormalization problem 
+        # https://github.com/keras-team/keras/pull/9965#issuecomment-501933060
+        tf.keras.layers.BatchNormalization = FrozenBatchNormalization
         base_model = tf.keras.applications.ResNet50(input_shape=(img_h, img_w, 3),
                                                     include_top=False,
                                                     layers=tf.keras.layers,
@@ -62,16 +68,6 @@ class Yolact(tf.keras.Model):
         self.detect = Detect(num_class, bkg_label=0, top_k=200,
                 conf_thresh=0.05, nms_thresh=0.5)
         self.max_output_size = 300
-
-    def set_bn(self, mode='train'):
-        if mode == 'train':
-            for layer in self.backbone_resnet.layers:
-                if isinstance(layer, tf.keras.layers.BatchNormalization):
-                    layer.trainable = False
-        else:
-            for layer in self.backbone_resnet.layers:
-                if isinstance(layer, tf.keras.layers.BatchNormalization):
-                    layer.trainable = True
 
     @tf.function
     def call(self, inputs, training=False):

@@ -1,7 +1,3 @@
-"""
-Arthor: Vedanshu
-"""
-
 import tensorflow as tf
 
 from data import tfrecord_decoder
