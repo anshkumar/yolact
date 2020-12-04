@@ -179,7 +179,7 @@ def create_tf_example(image,
             dataset_util.float_list_feature(ymin),
         'image/object/bbox/ymax':
             dataset_util.float_list_feature(ymax),
-        'image/object/class/label_text':
+        'image/object/class/label':
             dataset_util.bytes_list_feature(category_names),
         'image/object/class/label_id':
             dataset_util.int64_list_feature(category_ids),
