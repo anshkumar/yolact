@@ -51,6 +51,8 @@ class Anchor(object):
 
     def _encode(self, map_loc, center_anchors, include_variances=False):
         # center_gt = tf.map_fn(lambda x: map_to_center_form(x), map_loc)
+        # center_anchors in [cx, cy, w, h]
+        # map_loc in [ymin, xmin, ymax, xmax ]
         h = map_loc[:, 2] - map_loc[:, 0]
         w = map_loc[:, 3] - map_loc[:, 1]
         center_gt = tf.cast(tf.stack([map_loc[:, 1] + (w / 2), map_loc[:, 0] + (h / 2), w, h], axis=-1), tf.float32)
@@ -132,7 +134,12 @@ class Anchor(object):
         return self.anchors
 
     def matching(self, pos_thresh, neg_thresh, gt_bbox, gt_labels):
-        pairwise_iou = self._iou(self.anchors, gt_bbox) # # size: [num_objects, num_priors]; anchors along the row and ground_truth clong the columns
+        # Convert anchors from [cx, cy, w, h] to [ymin, xmin, ymax, xmax ] for IOU calculations
+        w = self.anchors[:, 2]
+        h = self.anchors[:, 3]
+        _anchors = tf.cast(tf.stack([self.anchors[:, 1] - (h / 2), self.anchors[:, 0] - (w / 2), self.anchors[:, 1] + (h / 2), self.anchors[:, 0] + (w / 2)], axis=-1), tf.float32)
+
+        pairwise_iou = self._iou(_anchors, gt_bbox) # # size: [num_objects, num_priors]; anchors along the row and ground_truth clong the columns
 
         each_prior_max = tf.reduce_max(pairwise_iou, axis=-1) # size [num_priors]; iou with ground truth with the anchors
         each_prior_index = tf.math.argmax(pairwise_iou, axis=-1) # size [num_priors]; id of groud truth having max iou with the anchors
@@ -162,6 +169,7 @@ class Anchor(object):
         conf = tf.tensor_scatter_nd_update(conf, neutral_label_index, -1*tf.ones(tf.size(neutral_label_index), dtype=tf.int64))
         conf = tf.tensor_scatter_nd_update(conf, background_label_index, tf.zeros(tf.size(background_label_index), dtype=tf.int64))
 
+        # anchors in [cx, cy, w, h]
         offsets = self._encode(each_prior_box, self.anchors)
 
         return offsets, conf, each_prior_box, each_prior_index
