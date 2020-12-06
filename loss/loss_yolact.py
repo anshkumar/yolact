@@ -158,7 +158,7 @@ class YOLACTLoss(object):
         target_labels = tf.concat([pos_gt_for_loss, neg_gt_for_loss], axis=0)
         target_labels = tf.one_hot(tf.squeeze(target_labels), depth=num_cls)
 
-        loss_conf = tf.reduce_sum(tf.nn.softmax_cross_entropy_with_logits(target_labels, target_logits)) / tf.cast(num_pos, tf.float32)
+        loss_conf = tf.reduce_sum(tf.nn.softmax_cross_entropy_with_logits(target_labels, target_logits)) / tf.reduce_sum(tf.cast(num_pos, tf.float32))
 
         return loss_conf
 
