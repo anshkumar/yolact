@@ -94,6 +94,7 @@ class Detect(object):
 
                 _masks_coef = tf.matmul(proto_p[b], tf.transpose(coef_thre))
                 _masks_coef = tf.sigmoid(_masks_coef) # [138, 138, NUM_BOX]
+
                 boxes, masks = self._crop_and_normalize(_masks_coef, box_thre)
                 paddings = tf.convert_to_tensor( [[0, pad_num_detection], [0,0], [0, 0], [0, 0]])
                 masks = tf.pad(masks, paddings, "CONSTANT")
@@ -150,7 +151,7 @@ class Detect(object):
         # [y_min, x_min, y_max, x_max]
         return tf.stack([boxes[:, :, 1], boxes[:, :, 0],boxes[:, :, 3], boxes[:, :, 2]], axis=-1)
 
-    def _sanitize_coordinates(self, _x1, _x2, img_size: int, padding: int = 0):
+    def _sanitize_coordinates(self, _x1, _x2, padding: int = 0):
         """
         Sanitizes the input coordinates so that x1 < x2, x1 != x2, x1 >= 0, and x2 <= image_size.
         Also converts from relative to absolute coordinates and casts the results to long tensors.
@@ -158,13 +159,13 @@ class Detect(object):
         """
         x1 = tf.math.minimum(_x1, _x2)
         x2 = tf.math.maximum(_x1, _x2)
-        x1 = tf.clip_by_value(x1 - padding, clip_value_min=0.0, clip_value_max=tf.cast(img_size,tf.float32))
-        x2 = tf.clip_by_value(x2 + padding, clip_value_min=0.0, clip_value_max=tf.cast(img_size,tf.float32))
+        x1 = tf.clip_by_value(x1 - padding, clip_value_min=0.0, clip_value_max=tf.cast(1.0,tf.float32))
+        x2 = tf.clip_by_value(x2 + padding, clip_value_min=0.0, clip_value_max=tf.cast(1.0,tf.float32))
 
         # Normalize the coordinates
-        return x1/tf.cast(img_size,tf.float32), x2/tf.cast(img_size,tf.float32)
+        return x1, x2
 
-    def _crop_and_normalize(self, masks, boxes, padding: int = 1, crop_size=(30,30)):
+    def _crop_and_normalize(self, masks, boxes, padding: int = 0, crop_size=(30,30)):
         """
         "Crop" predicted masks by zeroing out everything not in the predicted bbox.
         Args:
@@ -173,8 +174,8 @@ class Detect(object):
         """
         # h, w, n = masks.shape
         
-        x1, x2 = self._sanitize_coordinates(boxes[:, 1], boxes[:, 3], tf.shape(masks)[1], padding)
-        y1, y2 = self._sanitize_coordinates(boxes[:, 0], boxes[:, 2], tf.shape(masks)[0], padding)
+        x1, x2 = self._sanitize_coordinates(boxes[:, 1], boxes[:, 3], padding)
+        y1, y2 = self._sanitize_coordinates(boxes[:, 0], boxes[:, 2], padding)
 
         # Making adjustments for tf.image.crop_and_resize
         boxes = tf.stack((y1, x1, y2, x2), axis=1)

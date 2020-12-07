@@ -104,7 +104,7 @@ class YOLACTLoss(object):
 
         loss = tf.gather_nd(tf.reduce_sum(loss, -1), keep)
 
-        return tf.reduce_sum(loss) / tf.cast(num_pos, tf.float32)
+        return tf.reduce_sum(loss) / tf.reduce_sum(tf.cast(num_pos, tf.float32))
 
     def _loss_class(self, pred_cls, num_cls, conf_gt, ohem_use_most_confident=False):
         # num_cls includes background
@@ -205,7 +205,7 @@ class YOLACTLoss(object):
             # Normalize the mask loss to emulate roi pooling's effect on loss.
             pos_get_csize = utils.map_to_center_form(_pos_prior_box)
             _area = pos_get_csize[:, 2] * pos_get_csize[:, 3]
-            mask_loss = tf.reduce_sum(mask_loss, [0, 1]) / _area
+            mask_loss = tf.reduce_sum(mask_loss, [0, 1]) #/ _area
             
             if old_num_pos > num_pos:
                 mask_loss *= tf.cast(old_num_pos / num_pos, tf.float32)

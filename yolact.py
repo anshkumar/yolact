@@ -3,10 +3,10 @@ import tensorflow as tf
 from layers.fpn import FeaturePyramidNeck
 from layers.head import PredictionModule
 from layers.protonet import ProtoNet
-from utils.create_prior import make_priors
 import numpy as np
 assert tf.__version__.startswith('2')
 from detection import Detect
+from data import anchor
 
 class FrozenBatchNormalization(tf.keras.layers.BatchNormalization):
     def call(self, inputs, training=None):
@@ -52,7 +52,13 @@ class Yolact(tf.keras.Model):
         self.semantic_segmentation = tf.keras.layers.Conv2D(num_class-1, (1, 1), 1, padding="same",
                                                             kernel_initializer=tf.keras.initializers.glorot_uniform())
 
-        self.num_anchor, self.priors = make_priors(img_h, img_w, self.feature_map_size, aspect_ratio, scales)
+        anchorobj = anchor.Anchor(img_size_h=img_h,img_size_w=img_w,
+                              feature_map_size=self.feature_map_size,
+                              aspect_ratio=aspect_ratio,
+                              scale=scales)
+
+        self.num_anchors = anchorobj.num_anchors
+        self.priors = anchorobj.anchors
         # print("prior shape:", self.priors.shape)
         # print("num anchor per feature map: ", self.num_anchor)
 
