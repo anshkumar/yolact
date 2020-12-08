@@ -202,14 +202,14 @@ class YOLACTLoss(object):
             
             mask_loss = tf.keras.losses.binary_crossentropy(_pos_mask_gt, mask_p)
             # Normalize the mask loss to emulate roi pooling's effect on loss.
-            pos_get_csize = utils.map_to_center_form(_pos_prior_box)
-            _area = pos_get_csize[:, 2] * pos_get_csize[:, 3]
-            mask_loss = tf.reduce_sum(mask_loss, [0, 1]) #/ _area
+            # pos_get_csize = utils.map_to_center_form(_pos_prior_box)
+            # _area = pos_get_csize[:, 2] * pos_get_csize[:, 3]
+            mask_loss = tf.reduce_sum(mask_loss, [0, 1]) #/ tf.reduce_sum(_area)
             
             if old_num_pos > num_pos:
                 mask_loss *= tf.cast(old_num_pos / num_pos, tf.float32)
 
-            loss_m += tf.reduce_sum(mask_loss) / tf.cast(num_pos, tf.float32)
+            loss_m += tf.reduce_sum(mask_loss) #/ tf.cast(num_pos, tf.float32)
             
         loss_m /= (tf.cast(proto_h, tf.float32) * tf.cast(proto_w, tf.float32))
 
