@@ -2,7 +2,6 @@ import tensorflow as tf
 import time
 from utils import utils
 
-
 class YOLACTLoss(object):
 
     def __init__(self, loss_weight_cls=1,

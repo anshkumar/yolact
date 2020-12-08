@@ -181,7 +181,7 @@ class Detect(object):
         boxes = tf.stack((y1, x1, y2, x2), axis=1)
 
         box_indices = tf.zeros(tf.shape(boxes)[0], dtype=tf.int32) # All the boxes belong to a single batch
-        masks = tf.expand_dims(tf.transpose(masks), axis=-1)
+        masks = tf.expand_dims(tf.transpose(masks, (2,0,1)), axis=-1)
         masks = tf.image.crop_and_resize(masks, boxes, box_indices, crop_size)
 
         return boxes, masks

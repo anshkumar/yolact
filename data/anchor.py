@@ -1,7 +1,3 @@
-"""
-Arthor: Vedanshu
-"""
-
 from itertools import product
 from math import sqrt
 
