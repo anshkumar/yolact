@@ -1,19 +1,45 @@
 import tensorflow as tf
-import yolact
 import cv2
+import numpy as np
 
-model = yolact.Yolact(img_h=360, 
-                      img_w=1205,
-                      fpn_channels=256,
-                      num_class=2,
-                      num_mask=32,
-                      aspect_ratio=[1.81, 0.86, 0.78],
-                      scales=[24, 48, 96, 130, 192])
+@tf.function
+def prep_input(x):
+  x = tf.image.resize(x, [550, 550]) # If model was trained with 550x550 size images.
+  x = tf.expand_dims(x, axis=0) # Since infering on a single image, bactch size will be 1.
+  return tf.cast(x, tf.float32)
 
-model.load_weights('./weights/weights_3.4661324.h5')
+model = tf.saved_model.load('./saved_models/saved_model_0.19968511')
+infer = model.signatures["serving_default"]
 
 img = cv2.imread('test.jpg')
-out = model.predict(img)
+img = cv2.cvtColor(img, cv2.COLOR_RGB2BGR)
+output = infer(prep_input(img))
 
-from IPython import embed
-embed()
+_h = img.shape[0]
+_w = img.shape[1]
+
+det_num = output['num_detections'][0].numpy()
+det_boxes = output['detection_boxes'][0][:det_num]
+det_boxes = det_boxes.numpy()*np.array([_h,_w,_h,_w])
+det_masks = output['detection_masks'][0][:det_num].numpy()
+
+det_scores = output['detection_scores'][0][:det_num].numpy()
+det_classes = output['detection_classes'][0][:det_num].numpy()
+
+for i in range(det_num):
+    score = det_scores[i]
+    if score > 0.5:
+        box = det_boxes[i].astype(int)
+        _class = det_classes[i]
+        cv2.rectangle(img, (box[1], box[0]), (box[3], box[2]), (0, 255, 0), 2)
+        cv2.putText(img, str(_class), (box[1], box[0]), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 0, 0), lineType=cv2.LINE_AA)
+        mask = det_masks[i]
+        mask = cv2.resize(mask, (_w, _h))
+        mask = (mask > 0.5)
+        roi = img[mask]
+        blended = roi.astype("uint8")
+        img[mask] = blended*[0,0,1]
+
+cv2.imwrite("out.jpg", cv2.cvtColor(img, cv2.COLOR_RGB2BGR))
+
+

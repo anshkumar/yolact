@@ -271,7 +271,6 @@ def main(argv):
                     det_boxes = output['detection_boxes'][0][:det_num]
                     det_boxes = det_boxes.numpy()*np.array([_h,_w,_h,_w])
                     det_masks = output['detection_masks'][0][:det_num].numpy()
-                    # det_masks = det_masks[:,:,0]
                     det_masks = (det_masks > 0.5)
 
                     det_scores = output['detection_scores'][0][:det_num].numpy()
@@ -323,11 +322,8 @@ def main(argv):
                                         v_mask.result(),
                                         v_seg.result()))
             if valid_loss.result() < best_val:
-                # Saving the weights:
                 best_val = valid_loss.result()
-                # model.save_weights('./weights/weights_' + str(valid_loss.result().numpy()) + '.h5')
-                call_output = model.call.get_concrete_function(tf.TensorSpec([None, None, None, 3], tf.float32))
-                tf.saved_model.save(model, './saved_models/saved_model_'+ str(valid_loss.result().numpy()), signatures={'serving_default': call_output})
+                model.save('./saved_models/saved_model_'+ str(valid_loss.result().numpy()))
 
             # reset the metrics
             train_loss.reset_states()
