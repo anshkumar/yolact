@@ -20,12 +20,10 @@ python train.py -tfrecord_dir 'path of TFRecord files'
                 -save_interval 'interval for conducting validation'
                 -valid_iter 'number of iteration for validation'
 ```
-The default hyperparameters in train.py follows the original setting from the paper:
-* Batch size = 8, which is recommanded by paper
-* SGD optimizer with learning rate 1e-3 and divided by 10 at iterations 280K, 600K, 700K and 750K, using a momentum 0.9, a weight decay 5* 1e-4. In the original implementation of paper, a warm up learning rate 1e-4 and warm up iterations 500 are used, I put all those setting in a learning schedule object in *utils/learning_rate_schedule.py*.
-* Random photometrics distortion, horizontal flip(mirroring) and crop are used here for data augmentation.
+A sample file is given in `train.sh`
 
-## Inference (To Be Updated)
+## Inference 
+Inside `saved_models` there will be saved graphs according to the score of their validation. For an example `saved_model_0.19968511` is saved_model when the validation loss was 0.19968511. To run inference on using this saved_model see `infer.py`.
 
 ## Reference
 * https://github.com/feiyuhuahuo/Yolact_minimal
