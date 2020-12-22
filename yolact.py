@@ -124,7 +124,7 @@ class Yolact(tf.keras.Model):
             pred.update(result)
         else:
             pred = {
-                'pred_cls': tf.nn.softmax(pred_cls, axis=-1),
+                'pred_cls': pred_cls,
                 'pred_offset': pred_offset,
                 'pred_mask_coef': pred_mask_coef,
                 'proto_out': protonet_out,

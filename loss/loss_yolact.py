@@ -198,7 +198,7 @@ class YOLACTLoss(object):
             mask_p = tf.math.sigmoid(mask_p)
             
             # crop the pred (not real crop, zero out the area outside the gt box)
-            mask_p = utils.crop(mask_p, _pos_prior_box)  # _pos_prior_box.shape: (num_pos, 4)
+            # mask_p = utils.crop(mask_p, _pos_prior_box)  # _pos_prior_box.shape: (num_pos, 4)
             
             mask_loss = tf.keras.losses.binary_crossentropy(_pos_mask_gt, mask_p)
             # Normalize the mask loss to emulate roi pooling's effect on loss.

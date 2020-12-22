@@ -53,6 +53,8 @@ class Detect(object):
         
         num_class = tf.shape(class_p)[2] - 1
 
+        # Apply softmax to the prediction class
+        class_p = tf.nn.softmax(class_p, axis=-1)
         # exclude the background class
         class_p = class_p[:, :, 1:]
         # get the max score class of 27429 predicted boxes
@@ -78,7 +80,7 @@ class Detect(object):
                 detection_boxes = detection_boxes.write(detection_boxes.size(), tf.zeros((self.max_output_size, 4)))
                 detection_classes = detection_classes.write(detection_classes.size(), tf.zeros((self.max_output_size)))
                 detection_scores = detection_scores.write(detection_scores.size(),  tf.zeros((self.max_output_size)))
-                detection_masks = detection_masks.write(detection_masks.size(), tf.zeros((self.max_output_size, 30, 30, 1)))
+                detection_masks = detection_masks.write(detection_masks.size(), tf.zeros((self.max_output_size, 138, 138)))
                 num_detections = num_detections.write(num_detections.size(), tf.constant(0))
             else:
                 if not trad_nms:
@@ -95,8 +97,9 @@ class Detect(object):
                 _masks_coef = tf.matmul(proto_p[b], tf.transpose(coef_thre))
                 _masks_coef = tf.sigmoid(_masks_coef) # [138, 138, NUM_BOX]
 
-                boxes, masks = self._crop_and_normalize(_masks_coef, box_thre)
-                paddings = tf.convert_to_tensor( [[0, pad_num_detection], [0,0], [0, 0], [0, 0]])
+                boxes, masks = self._sanitize(_masks_coef, box_thre)
+                masks = tf.transpose(masks, (2,0,1))
+                paddings = tf.convert_to_tensor( [[0, pad_num_detection], [0,0], [0, 0]])
                 masks = tf.pad(masks, paddings, "CONSTANT")
                 
                 paddings = tf.convert_to_tensor( [[0, pad_num_detection], [0, 0]])
@@ -165,7 +168,7 @@ class Detect(object):
         # Normalize the coordinates
         return x1, x2
 
-    def _crop_and_normalize(self, masks, boxes, padding: int = 0, crop_size=(30,30)):
+    def _sanitize(self, masks, boxes, padding: int = 0, crop_size=(30,30)):
         """
         "Crop" predicted masks by zeroing out everything not in the predicted bbox.
         Args:
@@ -180,9 +183,9 @@ class Detect(object):
         # Making adjustments for tf.image.crop_and_resize
         boxes = tf.stack((y1, x1, y2, x2), axis=1)
 
-        box_indices = tf.zeros(tf.shape(boxes)[0], dtype=tf.int32) # All the boxes belong to a single batch
-        masks = tf.expand_dims(tf.transpose(masks, (2,0,1)), axis=-1)
-        masks = tf.image.crop_and_resize(masks, boxes, box_indices, crop_size)
+        # box_indices = tf.zeros(tf.shape(boxes)[0], dtype=tf.int32) # All the boxes belong to a single batch
+        # masks = tf.expand_dims(tf.transpose(masks, (2,0,1)), axis=-1)
+        # masks = tf.image.crop_and_resize(masks, boxes, box_indices, crop_size)
 
         return boxes, masks
 
