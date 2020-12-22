@@ -131,11 +131,6 @@ def main(argv):
         return
 
     add_weight_decay(model, FLAGS.weight_decay)
-    for layer in model.layers:
-        if isinstance(layer, tf.keras.layers.Conv2D) or isinstance(layer, tf.keras.layers.Dense):
-            layer.add_loss(lambda: tf.keras.regularizers.l2(FLAGS.weight_decay)(layer.kernel))
-        if hasattr(layer, 'bias_regularizer') and layer.use_bias:
-            layer.add_loss(lambda: tf.keras.regularizers.l2(FLAGS.weight_decay)(layer.bias))
 
     # -----------------------------------------------------------------
     # Choose the Optimizor, Loss Function, and Metrics, learning rate schedule
@@ -276,7 +271,7 @@ def main(argv):
                     det_boxes = output['detection_boxes'][0][:det_num]
                     det_boxes = det_boxes.numpy()*np.array([_h,_w,_h,_w])
                     det_masks = output['detection_masks'][0][:det_num].numpy()
-                    det_masks = det_masks[:,:,0]
+                    # det_masks = det_masks[:,:,0]
                     det_masks = (det_masks > 0.5)
 
                     det_scores = output['detection_scores'][0][:det_num].numpy()
@@ -285,16 +280,8 @@ def main(argv):
                     det_masked_image = np.zeros((det_num, _h, _w))
                     for _b in range(det_num):
                         _mask = det_masks[_b].astype("uint8")
-                        _box = det_boxes[_b] # [ymin, xmin, ymax, xmax ]
-                        (startY, startX, endY, endX) = _box.astype("int")
-                        boxW = endX - startX
-                        boxH = endY - startY
-                        if boxW == 0:
-                            boxW = 1
-                        if boxH == 0:
-                            boxH = 1
-                        _mask = cv2.resize(_mask, (boxW, boxH))
-                        det_masked_image[_b][startY:endY, startX:endX] = _mask
+                        _mask = cv2.resize(_mask, (_w, _h))
+                        det_masked_image[_b] = _mask
                     
                     coco_evaluator.add_single_detected_image_info(
                         image_id='image'+str(valid_iter),
@@ -338,9 +325,9 @@ def main(argv):
             if valid_loss.result() < best_val:
                 # Saving the weights:
                 best_val = valid_loss.result()
-                model.save_weights('./weights/weights_' + str(valid_loss.result().numpy()) + '.h5')
-                # call_output = model.call.get_concrete_function(tf.TensorSpec([None, None, None, 3], tf.float32))
-                # tf.saved_model.save(model, './saved_models/saved_model_'+ str(valid_loss.result().numpy()), signatures={'serving_default': call_output})
+                # model.save_weights('./weights/weights_' + str(valid_loss.result().numpy()) + '.h5')
+                call_output = model.call.get_concrete_function(tf.TensorSpec([None, None, None, 3], tf.float32))
+                tf.saved_model.save(model, './saved_models/saved_model_'+ str(valid_loss.result().numpy()), signatures={'serving_default': call_output})
 
             # reset the metrics
             train_loss.reset_states()
