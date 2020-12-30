@@ -18,6 +18,8 @@ from utils import standard_fields
 
 import numpy as np
 import cv2
+from google.protobuf import text_format
+from protos import string_int_label_map_pb2
 
 tf.random.set_seed(1234)
 
@@ -25,6 +27,8 @@ FLAGS = flags.FLAGS
 
 flags.DEFINE_string('tfrecord_dir', './data/coco',
                     'directory of tfrecord')
+flags.DEFINE_string('label_map', './label_map.pbtxt',
+                    'path to label_map.pbtxt')
 flags.DEFINE_string('weights', './weights',
                     'path to store weights')
 flags.DEFINE_integer('train_iter', 800000,
@@ -51,16 +55,71 @@ flags.DEFINE_float('weight_decay', 5 * 1e-4,
                    'weight_decay')
 flags.DEFINE_float('print_interval', 100,
                    'number of iteration between printing loss')
-flags.DEFINE_float('save_interval', 10000,
+flags.DEFINE_float('save_interval', 100,
                    'number of iteration between saving model(checkpoint)')
 flags.DEFINE_float('valid_iter', 10,
                    'number of iteration during validation')
 
+'''
 def _get_categories_list():
-  return [{
-      'id': 1,
-      'name': 'potato'
-  }]
+  
+'''
+def _validate_label_map(label_map):
+  # https://github.com/tensorflow/models/blob/67fd2bef6500c14b95e0b0de846960ed13802405/research/object_detection/utils/label_map_util.py#L34
+  """Checks if a label map is valid.
+  Args:
+    label_map: StringIntLabelMap to validate.
+  Raises:
+    ValueError: if label map is invalid.
+  """
+  for item in label_map.item:
+    if item.id < 0:
+      raise ValueError('Label map ids should be >= 0.')
+    if (item.id == 0 and item.name != 'background' and
+        item.display_name != 'background'):
+      raise ValueError('Label map id 0 is reserved for the background label')
+
+def load_labelmap(path):
+  # https://github.com/tensorflow/models/blob/67fd2bef6500c14b95e0b0de846960ed13802405/research/object_detection/utils/label_map_util.py#L159
+  """Loads label map proto.
+  Args:
+    path: path to StringIntLabelMap proto text file.
+  Returns:
+    a StringIntLabelMapProto
+  """
+  with tf.io.gfile.GFile(path, 'r') as fid:
+    label_map_string = fid.read()
+    label_map = string_int_label_map_pb2.StringIntLabelMap()
+    try:
+      text_format.Merge(label_map_string, label_map)
+    except text_format.ParseError:
+      label_map.ParseFromString(label_map_string)
+  _validate_label_map(label_map)
+  return label_map
+
+def _get_categories_list(label_map_path):
+    # https://github.com/tensorflow/models/blob/67fd2bef6500c14b95e0b0de846960ed13802405/research/cognitive_planning/label_map_util.py#L73
+    '''
+    return [{
+          'id': 1,
+          'name': 'person'
+      }, {
+          'id': 2,
+          'name': 'dog'
+      }, {
+          'id': 3,
+          'name': 'cat'
+      }]
+    '''
+    label_map = load_labelmap(label_map_path)
+    categories = []
+    list_of_ids_already_added = []
+    for item in label_map.item:
+        name = item.name
+        if item.id not in list_of_ids_already_added:
+          list_of_ids_already_added.append(item.id)
+          categories.append({'id': item.id, 'name': name})
+    return categories
 
 def main(argv):
     # set up Grappler for graph optimization
@@ -179,7 +238,7 @@ def main(argv):
         logging.info("Initializing from scratch.")
 
     # COCO evalator for showing MAP
-    coco_evaluator = coco_evaluation.CocoMaskEvaluator(_get_categories_list())
+    coco_evaluator = coco_evaluation.CocoMaskEvaluator(_get_categories_list(FLAGS.label_map))
 
     best_val = 1e10
     iterations = checkpoint.step.numpy()

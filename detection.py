@@ -48,6 +48,9 @@ class Detect(object):
         coef_p = net_outs['pred_mask_coef']  # [1, 27429, 32]
         anchors = net_outs['priors']  # [27429, 4]
         proto_p = net_outs['proto_out']  # [1, 90, 302, 32]
+        
+        proto_h = tf.shape(proto_p)[1]
+        proto_w = tf.shape(proto_p)[2]
 
         box_decode = self._decode(box_p, anchors)  # [1, 27429, 4]
         
@@ -80,7 +83,7 @@ class Detect(object):
                 detection_boxes = detection_boxes.write(detection_boxes.size(), tf.zeros((self.max_output_size, 4)))
                 detection_classes = detection_classes.write(detection_classes.size(), tf.zeros((self.max_output_size)))
                 detection_scores = detection_scores.write(detection_scores.size(),  tf.zeros((self.max_output_size)))
-                detection_masks = detection_masks.write(detection_masks.size(), tf.zeros((self.max_output_size, 138, 138)))
+                detection_masks = detection_masks.write(detection_masks.size(), tf.zeros((self.max_output_size, proto_h, proto_w)))
                 num_detections = num_detections.write(num_detections.size(), tf.constant(0))
             else:
                 if not trad_nms:

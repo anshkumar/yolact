@@ -64,7 +64,7 @@ class Parser(object):
 
         # read and normalize the image
         image = data['image']
-        image = tf.image.resize(image, [self._output_size_h, self._output_size_w])
+        
 
         #########################
         # _mean = tf.constant([103.94, 116.78, 123.68])
@@ -83,9 +83,7 @@ class Parser(object):
         # resize mask
         masks = tf.cast(masks, tf.bool)
         masks = tf.cast(masks, tf.float32)
-        masks = tf.expand_dims(masks, axis=-1)
-        masks = tf.image.resize(masks, [self._proto_output_size[0], self._proto_output_size[1]],
-                                method=tf.image.ResizeMethod.BILINEAR)
+
         # Mask values should only be either 0 or 1
         masks = tf.cast(masks + 0.5, tf.uint8)
 
@@ -94,6 +92,10 @@ class Parser(object):
         if augment:
             image, boxes, masks, classes = augmentation.random_augmentation(image, boxes, masks, [self._output_size_h, self._output_size_w],
                                                                         self._proto_output_size, classes)
+        masks = tf.expand_dims(masks, axis=-1)
+        image = tf.image.resize(image, [self._output_size_h, self._output_size_w])
+        masks = tf.image.resize(masks, [self._proto_output_size[0], self._proto_output_size[1]],
+                                        method=tf.image.ResizeMethod.BILINEAR)
         masks = tf.squeeze(masks)
         masks = tf.cast(masks, tf.float32)
         

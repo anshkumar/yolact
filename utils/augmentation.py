@@ -2,90 +2,10 @@ import numpy as np
 import tensorflow as tf
 import tensorflow_addons as tfa
 from utils import utils
+from utils import box_list
 import math
-
-"""
-Ref: https://github.com/balancap/SSD-Tensorflow/blob/master/preprocessing/ssd_vgg_preprocessing.py
-"""
-
-
-def geometric_distortion(img, bboxes, masks, output_size, classes):
-    # Geometric Distortions (img, bbox, mask)
-    # Each bounding box has shape [batch, num_boxes, box coords] and
-    # the coordinates are ordered [ymin, xmin, ymax, xmax].
-    bbox_begin, bbox_size, distort_bbox = tf.image.sample_distorted_bounding_box(
-        tf.shape(img),
-        bounding_boxes=tf.expand_dims(bboxes, 0),
-        min_object_covered=1,
-        aspect_ratio_range=(0.5, 2),
-        area_range=(0.1, 1.0),
-        max_attempts=100)
-    # the distort box is the area of the cropped image, original image will be [0, 0, 1, 1]
-    distort_bbox = distort_bbox[0, 0]
-    # Crop the image to the specified bounding box.
-    cropped_image = tf.slice(img, bbox_begin, bbox_size)
-    # Restore the shape since the dynamic slice loses 3rd dimension.
-    cropped_image.set_shape([None, None, 3])
-
-    # cropped the mask
-    bbox_begin = tf.concat([[0], bbox_begin], axis=0)
-    bbox_size = tf.concat([[-1], bbox_size], axis=0)
-    cropped_masks = tf.slice(masks, bbox_begin, bbox_size)
-    cropped_masks.set_shape([None, None, None, 1])
-
-    # resize the scale of bboxes for cropped image
-    v = tf.stack([distort_bbox[0], distort_bbox[1], distort_bbox[0], distort_bbox[1]])
-    bboxes = bboxes - v
-    s = tf.stack([distort_bbox[2] - distort_bbox[0],
-                  distort_bbox[3] - distort_bbox[1],
-                  distort_bbox[2] - distort_bbox[0],
-                  distort_bbox[3] - distort_bbox[1]])
-    bboxes = bboxes / s
-
-    # filter out
-    scores = utils.bboxes_intersection(tf.constant([0, 0, 1, 1], bboxes.dtype), bboxes)
-    bool_mask = scores > 0.5
-    classes = tf.boolean_mask(classes, bool_mask)
-    bboxes = tf.boolean_mask(bboxes, bool_mask)
-
-    # deal with negative value of bbox
-    bboxes = tf.clip_by_value(bboxes, clip_value_min=0, clip_value_max=1)
-
-    cropped_masks = tf.boolean_mask(cropped_masks, bool_mask)
-    # resize cropped to output size
-    cropped_image = tf.image.resize(cropped_image, [output_size[0], output_size[1]], method=tf.image.ResizeMethod.BILINEAR)
-
-    return cropped_image, bboxes, cropped_masks, classes
-
-
-def photometric_distortion(image):
-    color_ordering = tf.random.uniform([1], minval=0, maxval=4)[0]
-
-    if color_ordering < 1 and color_ordering > 0:
-        image = tf.image.random_brightness(image, max_delta=32.)
-        image = tf.image.random_saturation(image, lower=0.5, upper=1.5)
-        image = tf.image.random_hue(image, max_delta=0.2)
-        image = tf.image.random_contrast(image, lower=0.5, upper=1.5)
-
-    elif color_ordering < 2 and color_ordering > 1:
-        image = tf.image.random_saturation(image, lower=0.5, upper=1.5)
-        image = tf.image.random_brightness(image, max_delta=32.)
-        image = tf.image.random_contrast(image, lower=0.5, upper=1.5)
-        image = tf.image.random_hue(image, max_delta=0.2)
-
-    elif color_ordering < 3 and color_ordering > 2:
-        image = tf.image.random_contrast(image, lower=0.5, upper=1.5)
-        image = tf.image.random_hue(image, max_delta=0.2)
-        image = tf.image.random_brightness(image, max_delta=32.)
-        image = tf.image.random_saturation(image, lower=0.5, upper=1.5)
-
-    else:
-        image = tf.image.random_hue(image, max_delta=0.2)
-        image = tf.image.random_saturation(image, lower=0.5, upper=1.5)
-        image = tf.image.random_contrast(image, lower=0.5, upper=1.5)
-        image = tf.image.random_brightness(image, max_delta=32.)
-
-    return tf.clip_by_value(image, 0.0, 255.0)
+import functools
+import sys
 
 def _clip_bbox(min_y, min_x, max_y, max_x):
   # https://github.com/tensorflow/models/blob/e3f8ea2227ef5ce67df04bd175e6c20711079d8f/research/object_detection/utils/autoaugment_utils.py#L445
@@ -248,25 +168,1012 @@ def rotate_with_bboxes(image, mask, bboxes, degrees):
   bboxes = tf.map_fn(wrapped_rotate_bbox, bboxes)
   return image, bboxes, mask
 
+def _flip_boxes_left_right(boxes):
+  # https://github.com/tensorflow/models/blob/2986bcafb9eaa8fed4d78f17a04c4c5afc8f6691/official/vision/detection/utils/object_detection/preprocessor.py#L49
+  """Left-right flip the boxes.
+
+  Args:
+    boxes: rank 2 float32 tensor containing the bounding boxes -> [N, 4].
+           Boxes are in normalized form meaning their coordinates vary
+           between [0, 1].
+           Each row is in the form of [ymin, xmin, ymax, xmax].
+
+  Returns:
+    Flipped boxes.
+  """
+  ymin, xmin, ymax, xmax = tf.split(value=boxes, num_or_size_splits=4, axis=1)
+  flipped_xmin = tf.subtract(1.0, xmax)
+  flipped_xmax = tf.subtract(1.0, xmin)
+  flipped_boxes = tf.concat([ymin, flipped_xmin, ymax, flipped_xmax], 1)
+  return flipped_boxes
+
+def _flip_masks_left_right(masks):
+  # https://github.com/tensorflow/models/blob/2986bcafb9eaa8fed4d78f17a04c4c5afc8f6691/official/vision/detection/utils/object_detection/preprocessor.py#L67
+  """Left-right flip masks.
+
+  Args:
+    masks: rank 3 float32 tensor with shape
+      [num_instances, height, width] representing instance masks.
+
+  Returns:
+    flipped masks: rank 3 float32 tensor with shape
+      [num_instances, height, width] representing instance masks.
+  """
+  return masks[:, :, ::-1]
+
+def random_horizontal_flip(image,
+                           boxes=None,
+                           masks=None,
+                           seed=None):
+  # https://github.com/tensorflow/models/blob/2986bcafb9eaa8fed4d78f17a04c4c5afc8f6691/official/vision/detection/utils/object_detection/preprocessor.py#L182
+  """Randomly flips the image and detections horizontally.
+
+  The probability of flipping the image is 50%.
+
+  Args:
+    image: rank 3 float32 tensor with shape [height, width, channels].
+    boxes: (optional) rank 2 float32 tensor with shape [N, 4]
+           containing the bounding boxes.
+           Boxes are in normalized form meaning their coordinates vary
+           between [0, 1].
+           Each row is in the form of [ymin, xmin, ymax, xmax].
+    masks: (optional) rank 3 float32 tensor with shape
+           [num_instances, height, width] containing instance masks. The masks
+           are of the same height, width as the input `image`.
+    seed: random seed
+
+  Returns:
+    image: image which is the same shape as input image.
+
+    If boxes, masks, keypoints, and keypoint_flip_permutation are not None,
+    the function also returns the following tensors.
+
+    boxes: rank 2 float32 tensor containing the bounding boxes -> [N, 4].
+           Boxes are in normalized form meaning their coordinates vary
+           between [0, 1].
+    masks: rank 3 float32 tensor with shape [num_instances, height, width]
+           containing instance masks.
+  """
+
+  def _flip_image(image):
+    # flip image
+    image_flipped = tf.image.flip_left_right(image)
+    return image_flipped
+
+  result = []
+  # random variable defining whether to do flip or not
+  do_a_flip_random = tf.greater(tf.random.uniform([], seed=seed), 0.5)
+
+  # flip image
+  image = tf.cond(
+      pred=do_a_flip_random,
+      true_fn=lambda: _flip_image(image),
+      false_fn=lambda: image)
+  result.append(image)
+
+  # flip boxes
+  if boxes is not None:
+    boxes = tf.cond(
+        pred=do_a_flip_random,
+        true_fn=lambda: _flip_boxes_left_right(boxes),
+        false_fn=lambda: boxes)
+    result.append(boxes)
+
+  # flip masks
+  if masks is not None:
+    masks = tf.cond(
+        pred=do_a_flip_random,
+        true_fn=lambda: _flip_masks_left_right(masks),
+        false_fn=lambda: masks)
+    result.append(masks)
+
+  return tuple(result)
+
+def _get_or_create_preprocess_rand_vars(generator_func,
+                                        function_id,
+                                        preprocess_vars_cache,
+                                        key=''):
+  # https://github.com/tensorflow/models/blob/859f94a23c31f385fc3fb6f73f9d4fc276a4bd6a/research/object_detection/core/preprocessor.py#L172
+  """Returns a tensor stored in preprocess_vars_cache or using generator_func.
+  If the tensor was previously generated and appears in the PreprocessorCache,
+  the previously generated tensor will be returned. Otherwise, a new tensor
+  is generated using generator_func and stored in the cache.
+  Args:
+    generator_func: A 0-argument function that generates a tensor.
+    function_id: identifier for the preprocessing function used.
+    preprocess_vars_cache: PreprocessorCache object that records previously
+                           performed augmentations. Updated in-place. If this
+                           function is called multiple times with the same
+                           non-null cache, it will perform deterministically.
+    key: identifier for the variable stored.
+  Returns:
+    The generated tensor.
+  """
+  if preprocess_vars_cache is not None:
+    var = preprocess_vars_cache.get(function_id, key)
+    if var is None:
+      var = generator_func()
+      preprocess_vars_cache.update(function_id, key, var)
+  else:
+    var = generator_func()
+  return var
+
+def _random_integer(minval, maxval, seed):
+  # https://github.com/tensorflow/models/blob/859f94a23c31f385fc3fb6f73f9d4fc276a4bd6a/research/object_detection/core/preprocessor.py#L203
+  """Returns a random 0-D tensor between minval and maxval.
+
+  Args:
+    minval: minimum value of the random tensor.
+    maxval: maximum value of the random tensor.
+    seed: random seed.
+
+  Returns:
+    A random 0-D tensor between minval and maxval.
+  """
+  return tf.random.uniform(
+      [], minval=minval, maxval=maxval, dtype=tf.int32, seed=seed)
+
+def _get_crop_border(border, size):
+  # https://github.com/tensorflow/models/blob/859f94a23c31f385fc3fb6f73f9d4fc276a4bd6a/research/object_detection/core/preprocessor.py#L3982
+  border = tf.cast(border, tf.float32)
+  size = tf.cast(size, tf.float32)
+
+  i = tf.math.ceil(tf.math.log(2.0 * border / size) / tf.math.log(2.0))
+  divisor = tf.pow(2.0, i)
+  divisor = tf.clip_by_value(divisor, 1, border)
+  divisor = tf.cast(divisor, tf.int32)
+
+  return tf.cast(border, tf.int32) // divisor
+
+def _copy_extra_fields(boxlist_to_copy_to, boxlist_to_copy_from):
+  # https://github.com/tensorflow/models/blob/859f94a23c31f385fc3fb6f73f9d4fc276a4bd6a/research/object_detection/core/box_list_ops.py#L829
+  """Copies the extra fields of boxlist_to_copy_from to boxlist_to_copy_to.
+
+  Args:
+    boxlist_to_copy_to: BoxList to which extra fields are copied.
+    boxlist_to_copy_from: BoxList from which fields are copied.
+
+  Returns:
+    boxlist_to_copy_to with extra fields.
+  """
+  for field in boxlist_to_copy_from.get_extra_fields():
+    boxlist_to_copy_to.add_field(field, boxlist_to_copy_from.get_field(field))
+  return boxlist_to_copy_to
+
+def scale(boxlist, y_scale, x_scale, scope=None):
+  # https://github.com/tensorflow/models/blob/859f94a23c31f385fc3fb6f73f9d4fc276a4bd6a/research/object_detection/core/box_list_ops.py#L82
+  """scale box coordinates in x and y dimensions.
+
+  Args:
+    boxlist: BoxList holding N boxes
+    y_scale: (float) scalar tensor
+    x_scale: (float) scalar tensor
+    scope: name scope.
+
+  Returns:
+    boxlist: BoxList holding N boxes
+  """
+  y_scale = tf.cast(y_scale, tf.float32)
+  x_scale = tf.cast(x_scale, tf.float32)
+  y_min, x_min, y_max, x_max = tf.split(
+      value=boxlist.get(), num_or_size_splits=4, axis=1)
+  y_min = y_scale * y_min
+  y_max = y_scale * y_max
+  x_min = x_scale * x_min
+  x_max = x_scale * x_max
+  scaled_boxlist = box_list.BoxList(
+      tf.concat([y_min, x_min, y_max, x_max], 1))
+  return _copy_extra_fields(scaled_boxlist, boxlist)
+
+def change_coordinate_frame(boxlist, window, scope=None):
+  # https://github.com/tensorflow/models/blob/859f94a23c31f385fc3fb6f73f9d4fc276a4bd6a/research/object_detection/core/box_list_ops.py#L442
+  """Change coordinate frame of the boxlist to be relative to window's frame.
+
+  Given a window of the form [ymin, xmin, ymax, xmax],
+  changes bounding box coordinates from boxlist to be relative to this window
+  (e.g., the min corner maps to (0,0) and the max corner maps to (1,1)).
+
+  An example use case is data augmentation: where we are given groundtruth
+  boxes (boxlist) and would like to randomly crop the image to some
+  window (window). In this case we need to change the coordinate frame of
+  each groundtruth box to be relative to this new window.
+
+  Args:
+    boxlist: A BoxList object holding N boxes.
+    window: A rank 1 tensor [4].
+    scope: name scope.
+
+  Returns:
+    Returns a BoxList object with N boxes.
+  """
+  win_height = window[2] - window[0]
+  win_width = window[3] - window[1]
+  boxlist_new = scale(box_list.BoxList(
+      boxlist.get() - [window[0], window[1], window[0], window[1]]),
+                      1.0 / win_height, 1.0 / win_width)
+  boxlist_new = _copy_extra_fields(boxlist_new, boxlist)
+  return boxlist_new
+
+def combined_static_and_dynamic_shape(tensor):
+  # https://github.com/tensorflow/models/blob/859f94a23c31f385fc3fb6f73f9d4fc276a4bd6a/research/object_detection/utils/shape_utils.py#L163
+  """Returns a list containing static and dynamic values for the dimensions.
+  Returns a list of static and dynamic values for shape dimensions. This is
+  useful to preserve static shapes when available in reshape operation.
+  Args:
+    tensor: A tensor of any type.
+  Returns:
+    A list of size tensor.shape.ndims containing integers or a scalar tensor.
+  """
+  static_tensor_shape = tensor.shape.as_list()
+  dynamic_tensor_shape = tf.shape(tensor)
+  combined_shape = []
+  for index, dim in enumerate(static_tensor_shape):
+    if dim is not None:
+      combined_shape.append(dim)
+    else:
+      combined_shape.append(dynamic_tensor_shape[index])
+  return combined_shape
+
+
+def matmul_gather_on_zeroth_axis(params, indices, scope=None):
+  # https://github.com/tensorflow/models/blob/859f94a23c31f385fc3fb6f73f9d4fc276a4bd6a/research/object_detection/utils/ops.py#L990
+  """Matrix multiplication based implementation of tf.gather on zeroth axis.
+  TODO(rathodv, jonathanhuang): enable sparse matmul option.
+  Args:
+    params: A float32 Tensor. The tensor from which to gather values.
+      Must be at least rank 1.
+    indices: A Tensor. Must be one of the following types: int32, int64.
+      Must be in range [0, params.shape[0])
+    scope: A name for the operation (optional).
+  Returns:
+    A Tensor. Has the same type as params. Values from params gathered
+    from indices given by indices, with shape indices.shape + params.shape[1:].
+  """
+  params_shape = combined_static_and_dynamic_shape(params)
+  indices_shape = combined_static_and_dynamic_shape(indices)
+  params2d = tf.reshape(params, [params_shape[0], -1])
+  indicator_matrix = tf.one_hot(indices, params_shape[0])
+  gathered_result_flattened = tf.matmul(indicator_matrix, params2d)
+  return tf.reshape(gathered_result_flattened,
+                    tf.stack(indices_shape + params_shape[1:]))
+
+def gather(boxlist, indices, fields=None, scope=None, use_static_shapes=False):
+  """Gather boxes from BoxList according to indices and return new BoxList.
+
+  By default, `gather` returns boxes corresponding to the input index list, as
+  well as all additional fields stored in the boxlist (indexing into the
+  first dimension).  However one can optionally only gather from a
+  subset of fields.
+
+  Args:
+    boxlist: BoxList holding N boxes
+    indices: a rank-1 tensor of type int32 / int64
+    fields: (optional) list of fields to also gather from.  If None (default),
+      all fields are gathered from.  Pass an empty fields list to only gather
+      the box coordinates.
+    scope: name scope.
+    use_static_shapes: Whether to use an implementation with static shape
+      gurantees.
+
+  Returns:
+    subboxlist: a BoxList corresponding to the subset of the input BoxList
+    specified by indices
+  Raises:
+    ValueError: if specified field is not contained in boxlist or if the
+      indices are not of type int32
+  """
+  if len(indices.shape.as_list()) != 1:
+    raise ValueError('indices should have rank 1')
+  if indices.dtype != tf.int32 and indices.dtype != tf.int64:
+    raise ValueError('indices should be an int32 / int64 tensor')
+  gather_op = tf.gather
+  if use_static_shapes:
+    gather_op = matmul_gather_on_zeroth_axis
+  subboxlist = box_list.BoxList(gather_op(boxlist.get(), indices))
+  if fields is None:
+    fields = boxlist.get_extra_fields()
+  fields += ['boxes']
+  for field in fields:
+    if not boxlist.has_field(field):
+      raise ValueError('boxlist must contain all specified fields')
+    subfieldlist = gather_op(boxlist.get_field(field), indices)
+    subboxlist.add_field(field, subfieldlist)
+  return subboxlist
+
+def prune_completely_outside_window(boxlist, window, scope=None):
+  # https://github.com/tensorflow/models/blob/859f94a23c31f385fc3fb6f73f9d4fc276a4bd6a/research/object_detection/core/box_list_ops.py#L206
+  """Prunes bounding boxes that fall completely outside of the given window.
+
+  The function clip_to_window prunes bounding boxes that fall
+  completely outside the window, but also clips any bounding boxes that
+  partially overflow. This function does not clip partially overflowing boxes.
+
+  Args:
+    boxlist: a BoxList holding M_in boxes.
+    window: a float tensor of shape [4] representing [ymin, xmin, ymax, xmax]
+      of the window
+    scope: name scope.
+
+  Returns:
+    pruned_boxlist: a new BoxList with all bounding boxes partially or fully in
+      the window.
+    valid_indices: a tensor with shape [M_out] indexing the valid bounding boxes
+     in the input tensor.
+  """
+  y_min, x_min, y_max, x_max = tf.split(
+      value=boxlist.get(), num_or_size_splits=4, axis=1)
+  win_y_min, win_x_min, win_y_max, win_x_max = tf.unstack(window)
+  coordinate_violations = tf.concat([
+      tf.greater_equal(y_min, win_y_max), tf.greater_equal(x_min, win_x_max),
+      tf.less_equal(y_max, win_y_min), tf.less_equal(x_max, win_x_min)
+  ], 1)
+  valid_indices = tf.reshape(
+      tf.where(tf.math.logical_not(tf.reduce_any(coordinate_violations, 1))), [-1])
+  return gather(boxlist, valid_indices), valid_indices
+
+def intersection(boxlist1, boxlist2, scope=None):
+  # https://github.com/tensorflow/models/blob/859f94a23c31f385fc3fb6f73f9d4fc276a4bd6a/research/object_detection/core/box_list_ops.py#L238
+  """Compute pairwise intersection areas between boxes.
+  Args:
+    boxlist1: BoxList holding N boxes
+    boxlist2: BoxList holding M boxes
+    scope: name scope.
+  Returns:
+    a tensor with shape [N, M] representing pairwise intersections
+  """
+  y_min1, x_min1, y_max1, x_max1 = tf.split(
+      value=boxlist1.get(), num_or_size_splits=4, axis=1)
+  y_min2, x_min2, y_max2, x_max2 = tf.split(
+      value=boxlist2.get(), num_or_size_splits=4, axis=1)
+  all_pairs_min_ymax = tf.minimum(y_max1, tf.transpose(y_max2))
+  all_pairs_max_ymin = tf.maximum(y_min1, tf.transpose(y_min2))
+  intersect_heights = tf.maximum(0.0, all_pairs_min_ymax - all_pairs_max_ymin)
+  all_pairs_min_xmax = tf.minimum(x_max1, tf.transpose(x_max2))
+  all_pairs_max_xmin = tf.maximum(x_min1, tf.transpose(x_min2))
+  intersect_widths = tf.maximum(0.0, all_pairs_min_xmax - all_pairs_max_xmin)
+  return intersect_heights * intersect_widths
+
+def ioa(boxlist1, boxlist2, scope=None):
+  # https://github.com/tensorflow/models/blob/859f94a23c31f385fc3fb6f73f9d4fc276a4bd6a/research/object_detection/core/box_list_ops.py#L375
+  """Computes pairwise intersection-over-area between box collections.
+  intersection-over-area (IOA) between two boxes box1 and box2 is defined as
+  their intersection area over box2's area. Note that ioa is not symmetric,
+  that is, ioa(box1, box2) != ioa(box2, box1).
+  Args:
+    boxlist1: BoxList holding N boxes
+    boxlist2: BoxList holding M boxes
+    scope: name scope.
+  Returns:
+    a tensor with shape [N, M] representing pairwise ioa scores.
+  """
+  intersections = intersection(boxlist1, boxlist2)
+  areas = tf.expand_dims(area(boxlist2), 0)
+  return tf.truediv(intersections, areas)
+
+def prune_non_overlapping_boxes(
+    boxlist1, boxlist2, min_overlap=0.0, scope=None):
+  # https://github.com/tensorflow/models/blob/859f94a23c31f385fc3fb6f73f9d4fc276a4bd6a/research/object_detection/core/box_list_ops.py#L396
+  """Prunes the boxes in boxlist1 that overlap less than thresh with boxlist2.
+  For each box in boxlist1, we want its IOA to be more than minoverlap with
+  at least one of the boxes in boxlist2. If it does not, we remove it.
+  Args:
+    boxlist1: BoxList holding N boxes.
+    boxlist2: BoxList holding M boxes.
+    min_overlap: Minimum required overlap between boxes, to count them as
+                overlapping.
+    scope: name scope.
+  Returns:
+    new_boxlist1: A pruned boxlist with size [N', 4].
+    keep_inds: A tensor with shape [N'] indexing kept bounding boxes in the
+      first input BoxList `boxlist1`.
+  """
+  ioa_ = ioa(boxlist2, boxlist1)  # [M, N] tensor
+  ioa_ = tf.reduce_max(ioa_, axis=[0])  # [N] tensor
+  keep_bool = tf.greater_equal(ioa_, tf.constant(min_overlap))
+  keep_inds = tf.squeeze(tf.where(keep_bool), axis=[1])
+  new_boxlist1 = gather(boxlist1, keep_inds)
+  return new_boxlist1, keep_inds
+
+def area(boxlist, scope=None):
+  # https://github.com/tensorflow/models/blob/859f94a23c31f385fc3fb6f73f9d4fc276a4bd6a/research/object_detection/core/box_list_ops.py#L49
+  """Computes area of boxes.
+
+  Args:
+    boxlist: BoxList holding N boxes
+    scope: name scope.
+
+  Returns:
+    a tensor with shape [N] representing box areas.
+  """
+  y_min, x_min, y_max, x_max = tf.split(
+      value=boxlist.get(), num_or_size_splits=4, axis=1)
+  return tf.squeeze((y_max - y_min) * (x_max - x_min), [1])
+
+def clip_to_window(boxlist, window, filter_nonoverlapping=True, scope=None):
+  # https://github.com/tensorflow/models/blob/859f94a23c31f385fc3fb6f73f9d4fc276a4bd6a/research/object_detection/core/box_list_ops.py#L133
+  """Clip bounding boxes to a window.
+
+  This op clips any input bounding boxes (represented by bounding box
+  corners) to a window, optionally filtering out boxes that do not
+  overlap at all with the window.
+
+  Args:
+    boxlist: BoxList holding M_in boxes
+    window: a tensor of shape [4] representing the [y_min, x_min, y_max, x_max]
+      window to which the op should clip boxes.
+    filter_nonoverlapping: whether to filter out boxes that do not overlap at
+      all with the window.
+    scope: name scope.
+
+  Returns:
+    a BoxList holding M_out boxes where M_out <= M_in
+  """
+  y_min, x_min, y_max, x_max = tf.split(
+      value=boxlist.get(), num_or_size_splits=4, axis=1)
+  win_y_min = window[0]
+  win_x_min = window[1]
+  win_y_max = window[2]
+  win_x_max = window[3]
+  y_min_clipped = tf.maximum(tf.minimum(y_min, win_y_max), win_y_min)
+  y_max_clipped = tf.maximum(tf.minimum(y_max, win_y_max), win_y_min)
+  x_min_clipped = tf.maximum(tf.minimum(x_min, win_x_max), win_x_min)
+  x_max_clipped = tf.maximum(tf.minimum(x_max, win_x_max), win_x_min)
+  clipped = box_list.BoxList(
+      tf.concat([y_min_clipped, x_min_clipped, y_max_clipped, x_max_clipped],
+                1))
+  clipped = _copy_extra_fields(clipped, boxlist)
+  if filter_nonoverlapping:
+    areas = area(clipped)
+    nonzero_area_indices = tf.cast(
+        tf.reshape(tf.where(tf.greater(areas, 0.0)), [-1]), tf.int32)
+    clipped = gather(clipped, nonzero_area_indices)
+  return clipped
+
+def random_square_crop_by_scale(image, boxes, labels, label_weights,
+                                label_confidences=None, masks=None,
+                                keypoints=None, max_border=128, scale_min=0.6,
+                                scale_max=1.3, num_scales=8, seed=None,
+                                preprocess_vars_cache=None):
+  # https://github.com/tensorflow/models/blob/859f94a23c31f385fc3fb6f73f9d4fc276a4bd6a/research/object_detection/core/preprocessor.py#L3994
+  """Randomly crop a square in proportion to scale and image size.
+   Extract a square sized crop from an image whose side length is sampled by
+   randomly scaling the maximum spatial dimension of the image. If part of
+   the crop falls outside the image, it is filled with zeros.
+   The augmentation is borrowed from [1]
+   [1]: https://arxiv.org/abs/1904.07850
+  Args:
+    image: rank 3 float32 tensor containing 1 image ->
+           [height, width, channels].
+    boxes: rank 2 float32 tensor containing the bounding boxes -> [N, 4].
+           Boxes are in normalized form meaning their coordinates vary
+           between [0, 1]. Each row is in the form of [ymin, xmin, ymax, xmax].
+           Boxes on the crop boundary are clipped to the boundary and boxes
+           falling outside the crop are ignored.
+    labels: rank 1 int32 tensor containing the object classes.
+    label_weights: float32 tensor of shape [num_instances] representing the
+      weight for each box.
+    label_confidences: (optional) float32 tensor of shape [num_instances]
+      representing the confidence for each box.
+    masks: (optional) rank 3 float32 tensor with shape
+           [num_instances, height, width, 1] containing instance masks. The masks
+           are of the same height, width as the input `image`.
+    keypoints: (optional) rank 3 float32 tensor with shape
+      [num_instances, num_keypoints, 2]. The keypoints are in y-x normalized
+      coordinates.
+    max_border: The maximum size of the border. The border defines distance in
+      pixels to the image boundaries that will not be considered as a center of
+      a crop. To make sure that the border does not go over the center of the
+      image, we chose the border value by computing the minimum k, such that
+      (max_border / (2**k)) < image_dimension/2.
+    scale_min: float, the minimum value for scale.
+    scale_max: float, the maximum value for scale.
+    num_scales: int, the number of discrete scale values to sample between
+      [scale_min, scale_max]
+    seed: random seed.
+    preprocess_vars_cache: PreprocessorCache object that records previously
+                           performed augmentations. Updated in-place. If this
+                           function is called multiple times with the same
+                           non-null cache, it will perform deterministically.
+  Returns:
+    image: image which is the same rank as input image.
+    boxes: boxes which is the same rank as input boxes.
+           Boxes are in normalized form.
+    labels: new labels.
+    label_weights: rank 1 float32 tensor with shape [num_instances].
+    label_confidences: (optional) float32 tensor of shape [num_instances]
+      representing the confidence for each box.
+    masks: rank 3 float32 tensor with shape [num_instances, height, width]
+           containing instance masks.
+  """
+
+  img_shape = tf.shape(image)
+  height, width = img_shape[0], img_shape[1]
+  scales = tf.linspace(scale_min, scale_max, num_scales)
+
+  scale = _get_or_create_preprocess_rand_vars(
+      lambda: scales[_random_integer(0, num_scales, seed)],
+      'square_crop_scale',
+      preprocess_vars_cache, 'scale')
+
+  image_size = scale * tf.cast(tf.maximum(height, width), tf.float32)
+  image_size = tf.cast(image_size, tf.int32)
+  h_border = _get_crop_border(max_border, height)
+  w_border = _get_crop_border(max_border, width)
+
+  def y_function():
+    y = _random_integer(h_border,
+                        tf.cast(height, tf.int32) - h_border + 1,
+                        seed)
+    return y
+
+  def x_function():
+    x = _random_integer(w_border,
+                        tf.cast(width, tf.int32) - w_border + 1,
+                        seed)
+    return x
+
+  y_center = _get_or_create_preprocess_rand_vars(
+      y_function,
+      'square_crop_scale',
+      preprocess_vars_cache, 'y_center')
+
+  x_center = _get_or_create_preprocess_rand_vars(
+      x_function,
+      'square_crop_scale',
+      preprocess_vars_cache, 'x_center')
+
+  half_size = tf.cast(image_size / 2, tf.int32)
+  crop_ymin, crop_ymax = y_center - half_size, y_center + half_size
+  crop_xmin, crop_xmax = x_center - half_size, x_center + half_size
+
+  ymin = tf.maximum(crop_ymin, 0)
+  xmin = tf.maximum(crop_xmin, 0)
+  ymax = tf.minimum(crop_ymax, height - 1)
+  xmax = tf.minimum(crop_xmax, width - 1)
+
+  cropped_image = image[ymin:ymax, xmin:xmax]
+  offset_y = tf.maximum(0, ymin - crop_ymin)
+  offset_x = tf.maximum(0, xmin - crop_xmin)
+
+  oy_i = offset_y
+  ox_i = offset_x
+
+  output_image = tf.image.pad_to_bounding_box(
+      cropped_image, offset_height=oy_i, offset_width=ox_i,
+      target_height=image_size, target_width=image_size)
+
+  if ymin == 0:
+    # We might be padding the image.
+    box_ymin = -offset_y
+  else:
+    box_ymin = crop_ymin
+
+  if xmin == 0:
+    # We might be padding the image.
+    box_xmin = -offset_x
+  else:
+    box_xmin = crop_xmin
+
+  box_ymax = box_ymin + image_size
+  box_xmax = box_xmin + image_size
+
+  image_box = [box_ymin / height, box_xmin / width,
+               box_ymax / height, box_xmax / width]
+  boxlist = box_list.BoxList(boxes)
+  boxlist = change_coordinate_frame(boxlist, image_box)
+  boxlist, indices = prune_completely_outside_window(
+      boxlist, [0.0, 0.0, 1.0, 1.0])
+  boxlist = clip_to_window(boxlist, [0.0, 0.0, 1.0, 1.0],
+                                        filter_nonoverlapping=False)
+
+  return_values = [output_image, boxlist.get(),
+                   tf.gather(labels, indices),
+                   tf.gather(label_weights, indices)]
+
+  if label_confidences is not None:
+    return_values.append(tf.gather(label_confidences, indices))
+
+  if masks is not None:
+    new_masks = tf.expand_dims(masks, -1)
+    new_masks = new_masks[:, ymin:ymax, xmin:xmax]
+    new_masks = tf.image.pad_to_bounding_box(
+        new_masks, oy_i, ox_i, image_size, image_size)
+    new_masks = tf.squeeze(new_masks, [-1])
+    return_values.append(tf.gather(new_masks, indices))
+
+  return return_values
+
+def _strict_random_crop_image(image,
+                              boxes,
+                              labels,
+                              label_weights,
+                              label_confidences=None,
+                              multiclass_scores=None,
+                              masks=None,
+                              keypoints=None,
+                              keypoint_visibilities=None,
+                              densepose_num_points=None,
+                              densepose_part_ids=None,
+                              densepose_surface_coords=None,
+                              min_object_covered=1.0,
+                              aspect_ratio_range=(0.75, 1.33),
+                              area_range=(0.1, 1.0),
+                              overlap_thresh=0.3,
+                              clip_boxes=True,
+                              preprocess_vars_cache=None):
+  # https://github.com/tensorflow/models/blob/859f94a23c31f385fc3fb6f73f9d4fc276a4bd6a/research/object_detection/core/preprocessor.py#L1334
+  """Performs random crop.
+  Note: Keypoint coordinates that are outside the crop will be set to NaN, which
+  is consistent with the original keypoint encoding for non-existing keypoints.
+  This function always crops the image and is supposed to be used by
+  `random_crop_image` function which sometimes returns the image unchanged.
+  Args:
+    image: rank 3 float32 tensor containing 1 image -> [height, width, channels]
+           with pixel values varying between [0, 1].
+    boxes: rank 2 float32 tensor containing the bounding boxes with shape
+           [num_instances, 4].
+           Boxes are in normalized form meaning their coordinates vary
+           between [0, 1].
+           Each row is in the form of [ymin, xmin, ymax, xmax].
+    labels: rank 1 int32 tensor containing the object classes.
+    label_weights: float32 tensor of shape [num_instances] representing the
+      weight for each box.
+    label_confidences: (optional) float32 tensor of shape [num_instances]
+      representing the confidence for each box.
+    multiclass_scores: (optional) float32 tensor of shape
+      [num_instances, num_classes] representing the score for each box for each
+      class.
+    masks: (optional) rank 3 float32 tensor with shape
+           [num_instances, height, width] containing instance masks. The masks
+           are of the same height, width as the input `image`.
+    keypoints: (optional) rank 3 float32 tensor with shape
+               [num_instances, num_keypoints, 2]. The keypoints are in y-x
+               normalized coordinates.
+    keypoint_visibilities: (optional) rank 2 bool tensor with shape
+               [num_instances, num_keypoints].
+    densepose_num_points: (optional) rank 1 int32 tensor with shape
+                          [num_instances] with the number of sampled points per
+                          instance.
+    densepose_part_ids: (optional) rank 2 int32 tensor with shape
+                        [num_instances, num_points] holding the part id for each
+                        sampled point. These part_ids are 0-indexed, where the
+                        first non-background part has index 0.
+    densepose_surface_coords: (optional) rank 3 float32 tensor with shape
+                              [num_instances, num_points, 4]. The DensePose
+                              coordinates are of the form (y, x, v, u) where
+                              (y, x) are the normalized image coordinates for a
+                              sampled point, and (v, u) is the surface
+                              coordinate for the part.
+    min_object_covered: the cropped image must cover at least this fraction of
+                        at least one of the input bounding boxes.
+    aspect_ratio_range: allowed range for aspect ratio of cropped image.
+    area_range: allowed range for area ratio between cropped image and the
+                original image.
+    overlap_thresh: minimum overlap thresh with new cropped
+                    image to keep the box.
+    clip_boxes: whether to clip the boxes to the cropped image.
+    preprocess_vars_cache: PreprocessorCache object that records previously
+                           performed augmentations. Updated in-place. If this
+                           function is called multiple times with the same
+                           non-null cache, it will perform deterministically.
+  Returns:
+    image: image which is the same rank as input image.
+    boxes: boxes which is the same rank as input boxes.
+           Boxes are in normalized form.
+    labels: new labels.
+    If label_weights, multiclass_scores, masks, keypoints,
+    keypoint_visibilities, densepose_num_points, densepose_part_ids, or
+    densepose_surface_coords is not None, the function also returns:
+    label_weights: rank 1 float32 tensor with shape [num_instances].
+    multiclass_scores: rank 2 float32 tensor with shape
+                       [num_instances, num_classes]
+    masks: rank 3 float32 tensor with shape [num_instances, height, width]
+           containing instance masks.
+    keypoints: rank 3 float32 tensor with shape
+               [num_instances, num_keypoints, 2]
+    keypoint_visibilities: rank 2 bool tensor with shape
+                           [num_instances, num_keypoints]
+    densepose_num_points: rank 1 int32 tensor with shape [num_instances].
+    densepose_part_ids: rank 2 int32 tensor with shape
+                        [num_instances, num_points].
+    densepose_surface_coords: rank 3 float32 tensor with shape
+                              [num_instances, num_points, 4].
+  Raises:
+    ValueError: If some but not all of the DensePose tensors are provided.
+  """
+  densepose_tensors = [densepose_num_points, densepose_part_ids,
+                       densepose_surface_coords]
+  if (any(t is not None for t in densepose_tensors) and
+      not all(t is not None for t in densepose_tensors)):
+    raise ValueError('If cropping DensePose labels, must provide '
+                     '`densepose_num_points`, `densepose_part_ids`, and '
+                     '`densepose_surface_coords`')
+  image_shape = tf.shape(image)
+
+  # boxes are [N, 4]. Lets first make them [N, 1, 4].
+  boxes_expanded = tf.expand_dims(
+      tf.clip_by_value(
+          boxes, clip_value_min=0.0, clip_value_max=1.0), 1)
+
+  generator_func = functools.partial(
+      tf.image.sample_distorted_bounding_box,
+      image_shape,
+      bounding_boxes=boxes_expanded,
+      min_object_covered=min_object_covered,
+      aspect_ratio_range=aspect_ratio_range,
+      area_range=area_range,
+      max_attempts=100,
+      use_image_if_no_bounding_boxes=True)
+
+  # for ssd cropping, each value of min_object_covered has its own
+  # cached random variable
+  sample_distorted_bounding_box = _get_or_create_preprocess_rand_vars(
+      generator_func,
+      'strict_crop_image',
+      preprocess_vars_cache, key=min_object_covered)
+
+  im_box_begin, im_box_size, im_box = sample_distorted_bounding_box
+  im_box_end = im_box_begin + im_box_size
+  new_image = image[im_box_begin[0]:im_box_end[0],
+                    im_box_begin[1]:im_box_end[1], :]
+  new_image.set_shape([None, None, image.get_shape()[2]])
+
+  # [1, 4]
+  im_box_rank2 = tf.squeeze(im_box, axis=[0])
+  # [4]
+  im_box_rank1 = tf.squeeze(im_box)
+
+  boxlist = box_list.BoxList(boxes)
+  boxlist.add_field('labels', labels)
+
+  if label_weights is not None:
+    boxlist.add_field('label_weights', label_weights)
+
+  if label_confidences is not None:
+    boxlist.add_field('label_confidences', label_confidences)
+
+  if multiclass_scores is not None:
+    boxlist.add_field('multiclass_scores', multiclass_scores)
+
+  im_boxlist = box_list.BoxList(im_box_rank2)
+
+  # remove boxes that are outside cropped image
+  boxlist, inside_window_ids = prune_completely_outside_window(
+      boxlist, im_box_rank1)
+
+  # remove boxes that are outside image
+  overlapping_boxlist, keep_ids = prune_non_overlapping_boxes(
+      boxlist, im_boxlist, overlap_thresh)
+
+  # change the coordinate of the remaining boxes
+  new_labels = overlapping_boxlist.get_field('labels')
+  new_boxlist = change_coordinate_frame(overlapping_boxlist,
+                                                     im_box_rank1)
+  new_boxes = new_boxlist.get()
+  if clip_boxes:
+    new_boxes = tf.clip_by_value(
+        new_boxes, clip_value_min=0.0, clip_value_max=1.0)
+
+  result = [new_image, new_boxes, new_labels]
+
+  if label_weights is not None:
+    new_label_weights = overlapping_boxlist.get_field('label_weights')
+    result.append(new_label_weights)
+
+  if label_confidences is not None:
+    new_label_confidences = overlapping_boxlist.get_field('label_confidences')
+    result.append(new_label_confidences)
+
+  if multiclass_scores is not None:
+    new_multiclass_scores = overlapping_boxlist.get_field('multiclass_scores')
+    result.append(new_multiclass_scores)
+
+  if masks is not None:
+    masks_of_boxes_inside_window = tf.gather(masks, inside_window_ids)
+    masks_of_boxes_completely_inside_window = tf.gather(
+        masks_of_boxes_inside_window, keep_ids)
+    new_masks = masks_of_boxes_completely_inside_window[:, im_box_begin[
+        0]:im_box_end[0], im_box_begin[1]:im_box_end[1]]
+    result.append(new_masks)
+
+  return tuple(result)
+
+def random_crop_image(image,
+                      boxes,
+                      labels,
+                      label_weights,
+                      label_confidences=None,
+                      multiclass_scores=None,
+                      masks=None,
+                      keypoints=None,
+                      keypoint_visibilities=None,
+                      densepose_num_points=None,
+                      densepose_part_ids=None,
+                      densepose_surface_coords=None,
+                      min_object_covered=1.0,
+                      aspect_ratio_range=(0.75, 1.33),
+                      area_range=(0.1, 1.0),
+                      overlap_thresh=0.3,
+                      clip_boxes=True,
+                      random_coef=0.0,
+                      seed=None,
+                      preprocess_vars_cache=None):
+  # https://github.com/tensorflow/models/blob/859f94a23c31f385fc3fb6f73f9d4fc276a4bd6a/research/object_detection/core/preprocessor.py#L1574
+  """Randomly crops the image.
+  Given the input image and its bounding boxes, this op randomly
+  crops a subimage.  Given a user-provided set of input constraints,
+  the crop window is resampled until it satisfies these constraints.
+  If within 100 trials it is unable to find a valid crop, the original
+  image is returned. See the Args section for a description of the input
+  constraints. Both input boxes and returned Boxes are in normalized
+  form (e.g., lie in the unit square [0, 1]).
+  This function will return the original image with probability random_coef.
+  Note: Keypoint coordinates that are outside the crop will be set to NaN, which
+  is consistent with the original keypoint encoding for non-existing keypoints.
+  Also, the keypoint visibility will be set to False.
+  Args:
+    image: rank 3 float32 tensor contains 1 image -> [height, width, channels]
+           with pixel values varying between [0, 1].
+    boxes: rank 2 float32 tensor containing the bounding boxes with shape
+           [num_instances, 4].
+           Boxes are in normalized form meaning their coordinates vary
+           between [0, 1].
+           Each row is in the form of [ymin, xmin, ymax, xmax].
+    labels: rank 1 int32 tensor containing the object classes.
+    label_weights: float32 tensor of shape [num_instances] representing the
+      weight for each box.
+    label_confidences: (optional) float32 tensor of shape [num_instances].
+      representing the confidence for each box.
+    multiclass_scores: (optional) float32 tensor of shape
+      [num_instances, num_classes] representing the score for each box for each
+      class.
+    masks: (optional) rank 3 float32 tensor with shape
+           [num_instances, height, width] containing instance masks. The masks
+           are of the same height, width as the input `image`.
+    keypoints: (optional) rank 3 float32 tensor with shape
+               [num_instances, num_keypoints, 2]. The keypoints are in y-x
+               normalized coordinates.
+    keypoint_visibilities: (optional) rank 2 bool tensor with shape
+                           [num_instances, num_keypoints].
+    densepose_num_points: (optional) rank 1 int32 tensor with shape
+                          [num_instances] with the number of sampled points per
+                          instance.
+    densepose_part_ids: (optional) rank 2 int32 tensor with shape
+                        [num_instances, num_points] holding the part id for each
+                        sampled point. These part_ids are 0-indexed, where the
+                        first non-background part has index 0.
+    densepose_surface_coords: (optional) rank 3 float32 tensor with shape
+                              [num_instances, num_points, 4]. The DensePose
+                              coordinates are of the form (y, x, v, u) where
+                              (y, x) are the normalized image coordinates for a
+                              sampled point, and (v, u) is the surface
+                              coordinate for the part.
+    min_object_covered: the cropped image must cover at least this fraction of
+                        at least one of the input bounding boxes.
+    aspect_ratio_range: allowed range for aspect ratio of cropped image.
+    area_range: allowed range for area ratio between cropped image and the
+                original image.
+    overlap_thresh: minimum overlap thresh with new cropped
+                    image to keep the box.
+    clip_boxes: whether to clip the boxes to the cropped image.
+    random_coef: a random coefficient that defines the chance of getting the
+                 original image. If random_coef is 0, we will always get the
+                 cropped image, and if it is 1.0, we will always get the
+                 original image.
+    seed: random seed.
+    preprocess_vars_cache: PreprocessorCache object that records previously
+                           performed augmentations. Updated in-place. If this
+                           function is called multiple times with the same
+                           non-null cache, it will perform deterministically.
+  Returns:
+    image: Image shape will be [new_height, new_width, channels].
+    boxes: boxes which is the same rank as input boxes. Boxes are in normalized
+           form.
+    labels: new labels.
+    If label_weights, multiclass_scores, masks, keypoints,
+    keypoint_visibilities, densepose_num_points, densepose_part_ids,
+    densepose_surface_coords is not None, the function also returns:
+    label_weights: rank 1 float32 tensor with shape [num_instances].
+    multiclass_scores: rank 2 float32 tensor with shape
+                       [num_instances, num_classes]
+    masks: rank 3 float32 tensor with shape [num_instances, height, width]
+           containing instance masks.
+    keypoints: rank 3 float32 tensor with shape
+               [num_instances, num_keypoints, 2]
+    keypoint_visibilities: rank 2 bool tensor with shape
+                           [num_instances, num_keypoints]
+    densepose_num_points: rank 1 int32 tensor with shape [num_instances].
+    densepose_part_ids: rank 2 int32 tensor with shape
+                        [num_instances, num_points].
+    densepose_surface_coords: rank 3 float32 tensor with shape
+                              [num_instances, num_points, 4].
+  """
+
+  def strict_random_crop_image_fn():
+    return _strict_random_crop_image(
+        image,
+        boxes,
+        labels,
+        label_weights,
+        label_confidences=label_confidences,
+        multiclass_scores=multiclass_scores,
+        masks=masks,
+        keypoints=keypoints,
+        keypoint_visibilities=keypoint_visibilities,
+        densepose_num_points=densepose_num_points,
+        densepose_part_ids=densepose_part_ids,
+        densepose_surface_coords=densepose_surface_coords,
+        min_object_covered=min_object_covered,
+        aspect_ratio_range=aspect_ratio_range,
+        area_range=area_range,
+        overlap_thresh=overlap_thresh,
+        clip_boxes=clip_boxes,
+        preprocess_vars_cache=preprocess_vars_cache)
+
+  # avoids tf.cond to make faster RCNN training on borg. See b/140057645.
+  if random_coef < sys.float_info.min:
+    result = strict_random_crop_image_fn()
+  else:
+    generator_func = functools.partial(tf.random_uniform, [], seed=seed)
+    do_a_crop_random = _get_or_create_preprocess_rand_vars(
+        generator_func, preprocessor_cache.PreprocessorCache.CROP_IMAGE,
+        preprocess_vars_cache)
+    do_a_crop_random = tf.greater(do_a_crop_random, random_coef)
+
+    outputs = [image, boxes, labels]
+
+    if label_weights is not None:
+      outputs.append(label_weights)
+    if label_confidences is not None:
+      outputs.append(label_confidences)
+    if multiclass_scores is not None:
+      outputs.append(multiclass_scores)
+    if masks is not None:
+      outputs.append(masks)
+    if keypoints is not None:
+      outputs.append(keypoints)
+    if keypoint_visibilities is not None:
+      outputs.append(keypoint_visibilities)
+    if densepose_num_points is not None:
+      outputs.extend([densepose_num_points, densepose_part_ids,
+                      densepose_surface_coords])
+
+    result = tf.cond(do_a_crop_random, strict_random_crop_image_fn,
+                     lambda: tuple(outputs))
+  return result
 
 def random_augmentation(img, bboxes, masks, output_size, proto_output_size, classes):
     # generate random
-    FLAGS = tf.random.uniform([3], minval=0, maxval=1)
-    FLAG_GEO_DISTORTION = FLAGS[0]
-    FLAG_PHOTO_DISTORTION = FLAGS[1]
+    FLAGS = tf.random.uniform([4], minval=0, maxval=1)
+    FLAG_SQUARE_CROP_SCALE = FLAGS[0]
+    FLAG_CROP = FLAGS[1]
     FLAG_HOR_FLIP = FLAGS[2]
+    FLAG_ROTATE = FLAGS[3]
 
-    # Random Geometric Distortion (img, bboxes, masks)
-    # if FLAG_GEO_DISTORTION > 0.5:
-    #     img, bboxes, masks, classes = geometric_distortion(img, bboxes, masks, output_size, classes)
+    if FLAG_ROTATE > 0.75:
+      rand_angle = tf.random.uniform([1], minval=0, maxval=360)[0]
+      img, bboxes, masks = rotate_with_bboxes(img, masks, bboxes, rand_angle)
 
-    # Random Photometric Distortions (img)
-    # if FLAG_PHOTO_DISTORTION > 0.5:
-    #     img = photometric_distortion(img)
+    if FLAG_HOR_FLIP > 0.5:
+      img, bboxes, masks = random_horizontal_flip(img, bboxes, masks, 123)
+    
+    if FLAG_SQUARE_CROP_SCALE > 0.5:
+      (img, bboxes, classes, _, masks) = random_square_crop_by_scale(
+             img,
+             bboxes,
+             classes,
+             classes*0+1, # equal weights to all
+             masks=masks,
+             max_border=256,
+             scale_min=0.6,
+             scale_max=1.3)
 
-    # if FLAG_HOR_FLIP > 0.5:
-    rand_angle = tf.random.uniform([1], minval=0, maxval=360)[0]
-    # tf.print("Augmention angle: ", rand_angle)
-    img, bboxes, masks = rotate_with_bboxes(img, masks, bboxes, rand_angle)
+    if FLAG_CROP > 0.5:
+      (img, bboxes, classes, _, masks) = random_crop_image(
+             img,
+             bboxes,
+             classes,
+             classes*0+1, # equal weights to all
+             masks=masks)
 
     return img, bboxes, masks, classes
