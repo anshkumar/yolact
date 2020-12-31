@@ -138,6 +138,10 @@ class Anchor(object):
         pairwise_iou = self._iou(_anchors, gt_bbox) # # size: [num_objects, num_priors]; anchors along the row and ground_truth clong the columns
 
         each_prior_max = tf.reduce_max(pairwise_iou, axis=-1) # size [num_priors]; iou with ground truth with the anchors
+
+        if tf.shape(pairwise_iou)[-1] == 0: # No positive ground-truth boxes
+            return self.anchors*0, tf.cast(self.anchors[:, 0]*0, dtype=tf.int64), self.anchors*0, tf.cast(self.anchors[:, 0]*0, dtype=tf.int64)
+
         each_prior_index = tf.math.argmax(pairwise_iou, axis=-1) # size [num_priors]; id of groud truth having max iou with the anchors
 
         each_box_max = tf.reduce_max(pairwise_iou, axis=0)
