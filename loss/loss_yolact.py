@@ -66,7 +66,10 @@ class YOLACTLoss(object):
         # calculate the smoothL1(positive_pred, positive_gt) and return
         num_pos = tf.shape(gt_offset)[0]
         smoothl1loss = tf.keras.losses.Huber(delta=1., reduction=tf.losses.Reduction.NONE)
-        loss_loc = tf.reduce_sum(smoothl1loss(gt_offset, pred_offset)) / tf.cast(num_pos, tf.float32)
+        if tf.reduce_sum(tf.cast(num_pos, tf.float32)) > 0.0:
+            loss_loc = tf.reduce_sum(smoothl1loss(gt_offset, pred_offset)) / tf.reduce_sum(tf.cast(num_pos, tf.float32))
+        else:
+            loss_loc = 0.0
 
         return loss_loc
 
@@ -134,7 +137,7 @@ class YOLACTLoss(object):
         pos_indices = tf.where(conf_gt > 0 )
         loss_c = tf.tensor_scatter_nd_update(loss_c, pos_indices, tf.zeros(tf.shape(pos_indices)[0])) # filter out pos boxes
         num_pos = tf.math.count_nonzero(tf.greater(conf_gt,0), axis=1, keepdims=True)
-        num_neg = tf.clip_by_value(num_pos * self._neg_pos_ratio, clip_value_min=tf.constant(1, dtype=tf.int64), clip_value_max=tf.cast(tf.shape(conf_gt)[1]-1, tf.int64))
+        num_neg = tf.clip_by_value(num_pos * self._neg_pos_ratio, clip_value_min=tf.constant(0, dtype=tf.int64), clip_value_max=tf.cast(tf.shape(conf_gt)[1]-1, tf.int64))
 
         neutrals_indices = tf.where(conf_gt < 0 )
         loss_c = tf.tensor_scatter_nd_update(loss_c, neutrals_indices, tf.zeros(tf.shape(neutrals_indices)[0])) # filter out neutrals (conf_gt = -1)
@@ -157,8 +160,10 @@ class YOLACTLoss(object):
         target_labels = tf.concat([pos_gt_for_loss, neg_gt_for_loss], axis=0)
         target_labels = tf.one_hot(tf.squeeze(target_labels), depth=num_cls)
 
-        loss_conf = tf.reduce_sum(tf.nn.softmax_cross_entropy_with_logits(target_labels, target_logits)) / tf.reduce_sum(tf.cast(num_pos, tf.float32))
-
+        if tf.reduce_sum(tf.cast(num_pos, tf.float32)) > 0.0:
+            loss_conf = tf.reduce_sum(tf.nn.softmax_cross_entropy_with_logits(target_labels, target_logits)) / tf.reduce_sum(tf.cast(num_pos, tf.float32))
+        else:
+            loss_conf = 0.0
         return loss_conf
 
     def _loss_mask(self, prior_max_index, coef_p, proto_p, mask_gt, prior_max_box, conf_gt):
