@@ -97,6 +97,7 @@ class Parser(object):
         masks = tf.image.resize(masks, [self._proto_output_size[0], self._proto_output_size[1]],
                                         method=tf.image.ResizeMethod.BILINEAR)
         masks = tf.squeeze(masks)
+        masks = tf.cast(masks + 0.5, tf.uint8)
         masks = tf.cast(masks, tf.float32)
         
         # matching anchors

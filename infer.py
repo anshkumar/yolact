@@ -8,7 +8,7 @@ def prep_input(x):
   x = tf.expand_dims(x, axis=0) # Since infering on a single image, bactch size will be 1.
   return tf.cast(x, tf.float32)
 
-model = tf.saved_model.load('./saved_models/saved_model_0.19968511')
+model = tf.saved_model.load('./saved_models/saved_model_0.17916931')
 infer = model.signatures["serving_default"]
 
 img = cv2.imread('test.jpg')
@@ -32,7 +32,7 @@ for i in range(det_num):
         box = det_boxes[i].astype(int)
         _class = det_classes[i]
         cv2.rectangle(img, (box[1], box[0]), (box[3], box[2]), (0, 255, 0), 2)
-        cv2.putText(img, str(_class), (box[1], box[0]), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 0, 0), lineType=cv2.LINE_AA)
+        cv2.putText(img, str(_class)+'; '+str(round(score,2)), (box[1], box[0]), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 0, 0), lineType=cv2.LINE_AA)
         mask = det_masks[i]
         mask = cv2.resize(mask, (_w, _h))
         mask = (mask > 0.5)

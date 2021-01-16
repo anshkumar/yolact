@@ -55,7 +55,7 @@ flags.DEFINE_float('weight_decay', 5 * 1e-4,
                    'weight_decay')
 flags.DEFINE_float('print_interval', 100,
                    'number of iteration between printing loss')
-flags.DEFINE_float('save_interval', 100,
+flags.DEFINE_float('save_interval', 10000,
                    'number of iteration between saving model(checkpoint)')
 flags.DEFINE_float('valid_iter', 10,
                    'number of iteration during validation')
@@ -140,7 +140,7 @@ def main(argv):
                           img_w=FLAGS.img_w,
                           fpn_channels=256,
                           num_class=FLAGS.num_class+1, # adding background class
-                          num_mask=32,
+                          num_mask=64,
                           aspect_ratio=[float(i) for i in FLAGS.aspect_ratio],
                           scales=[int(i) for i in FLAGS.scale])
 

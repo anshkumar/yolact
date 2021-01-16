@@ -1156,7 +1156,15 @@ def random_augmentation(img, bboxes, masks, output_size, proto_output_size, clas
 
     if FLAG_HOR_FLIP > 0.5:
       img, bboxes, masks = random_horizontal_flip(img, bboxes, masks, 123)
-    
+
+    if FLAG_CROP > 0.5:
+      (img, bboxes, classes, _, masks) = random_crop_image(
+             img,
+             bboxes,
+             classes,
+             classes*0+1, # equal weights to all
+             masks=masks)
+
     if FLAG_SQUARE_CROP_SCALE > 0.5:
       (img, bboxes, classes, _, masks) = random_square_crop_by_scale(
              img,
@@ -1167,13 +1175,5 @@ def random_augmentation(img, bboxes, masks, output_size, proto_output_size, clas
              max_border=256,
              scale_min=0.6,
              scale_max=1.3)
-
-    if FLAG_CROP > 0.5:
-      (img, bboxes, classes, _, masks) = random_crop_image(
-             img,
-             bboxes,
-             classes,
-             classes*0+1, # equal weights to all
-             masks=masks)
 
     return img, bboxes, masks, classes
