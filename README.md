@@ -114,13 +114,14 @@ For every example in your dataset, you should have the following information:
     1. A bounding box coordinates (with origin in top left corner) defined by 4
        floating point numbers [ymin, xmin, ymax, xmax]. Note that we store the
        _normalized_ coordinates (x / width, y / height) in the TFRecord dataset.
-    2. The class of the object in the bounding box.
+    2. The class id of the object in the bounding box.
+3. PNG encoded mask for every groundtruth bounding box. Each mask has only a single channel, and the pixel values are either 0 (background) or 1 (object mask). 
 
 ### (3) Usage
 Training procedure can be conducted directly by following command:
 ```
 python train.py -tfrecord_dir 'path of TFRecord files'
-				-label_map 'path label_map.pbtxt'
+				        -label_map 'path label_map.pbtxt'
                 -weights 'path to store weights' 
                 -train_iter 'number of  iteration for training'
                 -img_h 'image height'
