@@ -2,18 +2,13 @@ import tensorflow as tf
 import cv2
 import numpy as np
 
-@tf.function
-def prep_input(x):
-  x = tf.image.resize(x, [550, 550]) # If model was trained with 550x550 size images.
-  x = tf.expand_dims(x, axis=0) # Since infering on a single image, bactch size will be 1.
-  return tf.cast(x, tf.float32)
-
 model = tf.saved_model.load('./saved_models/saved_model_0.17916931')
 infer = model.signatures["serving_default"]
 
 img = cv2.imread('test.jpg')
-img = cv2.cvtColor(img, cv2.COLOR_RGB2BGR)
-output = infer(prep_input(img))
+img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
+img = cv2.resize(img, (550, 550)).astype(np.float32)
+output = infer(tf.constant(img[None, ...]))
 
 _h = img.shape[0]
 _w = img.shape[1]

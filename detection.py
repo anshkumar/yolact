@@ -52,8 +52,6 @@ class Detect(object):
         proto_h = tf.shape(proto_p)[1]
         proto_w = tf.shape(proto_p)[2]
 
-        box_decode = self._decode(box_p, anchors)  # [1, 27429, 4]
-        
         num_class = tf.shape(class_p)[2] - 1
 
         # Apply softmax to the prediction class
@@ -64,66 +62,47 @@ class Detect(object):
         class_p_max = tf.reduce_max(class_p, axis=-1)  # [1, 27429]
         batch_size = tf.shape(class_p_max)[0]
 
-        # Not using python list here, as tf Autograph has some issues with it
-        # https://github.com/tensorflow/tensorflow/issues/37512#issuecomment-600776581
-        detection_boxes = tf.TensorArray(tf.float32, size=0, dynamic_size=True)
-        detection_classes = tf.TensorArray(tf.float32, size=0, dynamic_size=True)
-        detection_scores = tf.TensorArray(tf.float32, size=0, dynamic_size=True)
-        detection_masks = tf.TensorArray(tf.float32, size=0, dynamic_size=True)
-        num_detections = tf.TensorArray(tf.int32, size=0, dynamic_size=True)
+        detection_boxes = tf.zeros((batch_size, self.max_output_size, 4), tf.float32)
+        detection_classes = tf.zeros((batch_size, self.max_output_size), tf.float32)
+        detection_scores = tf.zeros((batch_size, self.max_output_size), tf.float32)
+        detection_masks = tf.zeros((batch_size, self.max_output_size, proto_h, proto_w), tf.float32)
+        num_detections = tf.zeros((batch_size), tf.int32)
 
         for b in range(batch_size):
             # filter predicted boxes according the class score
             class_thre = tf.boolean_mask(class_p[b], class_p_max[b] > 0.3)
-            box_thre = tf.boolean_mask(box_decode[b], class_p_max[b] > 0.3) 
             coef_thre = tf.boolean_mask(coef_p[b], class_p_max[b] > 0.3)
+            raw_boxes = tf.boolean_mask(box_p[b], class_p_max[b] > 0.3)
+            raw_anchors = tf.boolean_mask(anchors, class_p_max[b] > 0.3)
 
-            if tf.size(class_thre) == 0:
-                # TODO: Check this
-                detection_boxes = detection_boxes.write(detection_boxes.size(), tf.zeros((self.max_output_size, 4)))
-                detection_classes = detection_classes.write(detection_classes.size(), tf.zeros((self.max_output_size)))
-                detection_scores = detection_scores.write(detection_scores.size(),  tf.zeros((self.max_output_size)))
-                detection_masks = detection_masks.write(detection_masks.size(), tf.zeros((self.max_output_size, proto_h, proto_w)))
-                num_detections = num_detections.write(num_detections.size(), tf.constant(0))
-            else:
+            # decode only selected boxes
+            box_thre = self._decode(raw_boxes, raw_anchors)  # [27429, 4]
+
+            if tf.size(class_thre) != 0:
                 if not trad_nms:
                     box_thre, coef_thre, class_ids, class_thre = _fast_nms(box_thre, coef_thre, class_thre)
                 else:
                     box_thre, coef_thre, class_ids, class_thre = self._traditional_nms(box_thre, coef_thre, class_thre)
 
-                # Padding with zeroes to reach max_output_size
-                class_ids = tf.concat([class_ids, tf.zeros(self.max_output_size - tf.shape(box_thre)[0])], 0)
-                class_thre = tf.concat([class_thre, tf.zeros(self.max_output_size - tf.shape(box_thre)[0])], 0)
-                num_detection = tf.shape(box_thre)[0]
-                pad_num_detection = self.max_output_size - num_detection
+                num_detection = [tf.shape(box_thre)[0]]
 
                 _masks_coef = tf.matmul(proto_p[b], tf.transpose(coef_thre))
                 _masks_coef = tf.sigmoid(_masks_coef) # [138, 138, NUM_BOX]
 
                 boxes, masks = self._sanitize(_masks_coef, box_thre)
                 masks = tf.transpose(masks, (2,0,1))
-                paddings = tf.convert_to_tensor( [[0, pad_num_detection], [0,0], [0, 0]])
-                masks = tf.pad(masks, paddings, "CONSTANT")
-                
-                paddings = tf.convert_to_tensor( [[0, pad_num_detection], [0, 0]])
-                boxes = tf.pad(boxes, paddings, "CONSTANT")
 
-                detection_boxes = detection_boxes.write(detection_boxes.size(), boxes)
-                detection_classes = detection_classes.write(detection_classes.size(), class_ids)
-                detection_scores = detection_scores.write(detection_scores.size(), class_thre)
-                detection_masks = detection_masks.write(detection_masks.size(), masks)
-                num_detections = num_detections.write(num_detections.size(), num_detection)
+                _ind_boxes = tf.stack((tf.tile([b], num_detection), tf.range(0, tf.shape(box_thre)[0])), axis=-1) # Shape: (Number of updates, index of update)
+                detection_boxes = tf.tensor_scatter_nd_update(detection_boxes, _ind_boxes, boxes)
+                detection_classes = tf.tensor_scatter_nd_update(detection_classes, _ind_boxes, class_ids)
+                detection_scores = tf.tensor_scatter_nd_update(detection_scores, _ind_boxes, class_thre)
+                detection_masks = tf.tensor_scatter_nd_update(detection_masks, _ind_boxes, masks)
+                num_detections = tf.tensor_scatter_nd_update(num_detections, [[b]], num_detection)
 
-        detection_boxes = detection_boxes.stack()
-        detection_classes = detection_classes.stack()
-        detection_scores = detection_scores.stack()
-        detection_masks = detection_masks.stack()
-        num_detections = num_detections.stack()
-        
         result = {'detection_boxes': detection_boxes,'detection_classes': detection_classes, 'detection_scores': detection_scores, 'detection_masks': detection_masks, 'num_detections': num_detections}
         return result
 
-    def _decode(self, box_p, priors, include_variances=False):
+    def _batch_decode(self, box_p, priors, include_variances=False):
         # https://github.com/feiyuhuahuo/Yolact_minimal/blob/9299a0cf346e455d672fadd796ac748871ba85e4/utils/box_utils.py#L151
         """
         Decode predicted bbox coordinates using the scheme
@@ -156,6 +135,40 @@ class Detect(object):
         
         # [y_min, x_min, y_max, x_max]
         return tf.stack([boxes[:, :, 1], boxes[:, :, 0],boxes[:, :, 3], boxes[:, :, 2]], axis=-1)
+
+    def _decode(self, box_p, priors, include_variances=False):
+        # https://github.com/feiyuhuahuo/Yolact_minimal/blob/9299a0cf346e455d672fadd796ac748871ba85e4/utils/box_utils.py#L151
+        """
+        Decode predicted bbox coordinates using the scheme
+        employed at https://lilianweng.github.io/lil-log/2017/12/31/object-recognition-for-dummies-part-3.html
+            b_x = prior_w*loc_x + prior_x
+            b_y = prior_h*loc_y + prior_y
+            b_w = prior_w * exp(loc_w)
+            b_h = prior_h * exp(loc_h)
+        
+        Note that loc is inputed as [c_x, x_y, w, h]
+        while priors are inputed as [c_x, c_y, w, h] where each coordinate
+        is relative to size of the image.
+        
+        Also note that prior_x and prior_y are center coordinates.
+        """
+        variances = [0.1, 0.2]
+        box_p = tf.cast(box_p, tf.float32)
+        priors = tf.cast(priors, tf.float32)
+        if include_variances:
+            b_x_y = priors[:, :2] + box_p[:, :2] * priors[:, 2:]* variances[0]
+            b_w_h = priors[:, 2:] * tf.math.exp(box_p[:, 2:]* variances[1])
+        else:
+            b_x_y = priors[:, :2] + box_p[:, :2] * priors[:, 2:]
+            b_w_h = priors[:, 2:] * tf.math.exp(box_p[:, 2:])
+        
+        boxes = tf.concat([b_x_y, b_w_h], axis=-1)
+        
+        # [x_min, y_min, x_max, y_max]
+        boxes = tf.concat([boxes[:, :2] - boxes[:, 2:] / 2, boxes[:, 2:] / 2 + boxes[:, :2]], axis=-1)
+        
+        # [y_min, x_min, y_max, x_max]
+        return tf.stack([boxes[:, 1], boxes[:, 0],boxes[:, 3], boxes[:, 2]], axis=-1)
 
     def _sanitize_coordinates(self, _x1, _x2, padding: int = 0):
         """
@@ -192,14 +205,14 @@ class Detect(object):
 
         return boxes, masks
 
-    def _traditional_nms(self, boxes, masks, scores, iou_threshold=0.5, score_threshold=0.3, max_class_output_size=100, max_output_size=300, soft_nms_sigma=0.5):
+    def _traditional_nms(self, boxes, mask_coef, scores, iou_threshold=0.5, score_threshold=0.3, max_class_output_size=100, max_output_size=300, soft_nms_sigma=0.5):
         num_classes = tf.shape(scores)[1]
-        # List won't work as for now
-        # https://github.com/tensorflow/tensorflow/issues/37512#issuecomment-600776581
-        box_lst_arr = tf.TensorArray(tf.float32, size=0, dynamic_size=True)
-        mask_lst_arr = tf.TensorArray(tf.float32, size=0, dynamic_size=True)
-        cls_lst_arr = tf.TensorArray(tf.float32, size=0, dynamic_size=True)
-        scr_lst_arr = tf.TensorArray(tf.float32, size=0, dynamic_size=True)
+
+        _num_coef = tf.shape(mask_coef)[1]
+        _boxes = tf.zeros((max_class_output_size*num_classes, 4), tf.float32)
+        _coefs = tf.zeros((max_class_output_size*num_classes, _num_coef), tf.float32)
+        _classes = tf.zeros((max_class_output_size*num_classes), tf.float32)
+        _scores = tf.zeros((max_class_output_size*num_classes), tf.float32)
 
         for _cls in range(num_classes):
             cls_scores = scores[:, _cls]
@@ -210,22 +223,21 @@ class Detect(object):
                 iou_threshold=iou_threshold, 
                 score_threshold=score_threshold,
                 soft_nms_sigma=soft_nms_sigma)
-            
-            box_lst_arr = box_lst_arr.write(box_lst_arr.size(), tf.gather(boxes, selected_indices))
-            mask_lst_arr = mask_lst_arr.write(mask_lst_arr.size(), tf.gather(masks, selected_indices))
-            cls_lst_arr = cls_lst_arr.write(cls_lst_arr.size(), tf.gather(cls_scores, selected_indices) * 0.0 + tf.cast(_cls, dtype=tf.float32) + 1.0) # class ID starting from 1
-            scr_lst_arr = scr_lst_arr.write(scr_lst_arr.size(), tf.gather(cls_scores, selected_indices))
 
-        boxes = box_lst_arr.stack()[0]
-        masks = mask_lst_arr.stack()[0]
-        classes = cls_lst_arr.stack()[0]
-        scores = scr_lst_arr.stack()[0]
+            _update_boxes = tf.gather(boxes, selected_indices)
+            _num_boxes = tf.shape(_update_boxes)[0]
+            _ind_boxes = tf.range(_cls*max_class_output_size, _cls*max_class_output_size+_num_boxes)
 
-        _ids = tf.argsort(scores, direction='DESCENDING')
-        scores = tf.gather(scores, _ids)[:max_output_size]
-        boxes = tf.gather(boxes, _ids)[:max_output_size]
-        masks = tf.gather(masks, _ids)[:max_output_size]
-        classes = tf.gather(classes, _ids)[:max_output_size]
+            _boxes = tf.tensor_scatter_nd_update(_boxes, tf.expand_dims(_ind_boxes, axis=-1), _update_boxes)
+            _coefs = tf.tensor_scatter_nd_update(_coefs, tf.expand_dims(_ind_boxes, axis=-1), tf.gather(mask_coef, selected_indices))
+            _classes = tf.tensor_scatter_nd_update(_classes, tf.expand_dims(_ind_boxes, axis=-1), tf.gather(cls_scores, selected_indices) * 0.0 + tf.cast(_cls, dtype=tf.float32) + 1.0)
+            _scores = tf.tensor_scatter_nd_update(_scores, tf.expand_dims(_ind_boxes, axis=-1), tf.gather(cls_scores, selected_indices))
 
-        return boxes, masks, classes, scores
+        _ids = tf.argsort(_scores, direction='DESCENDING')
+        scores = tf.gather(_scores, _ids)[:max_output_size]
+        boxes = tf.gather(_boxes, _ids)[:max_output_size]
+        mask_coef = tf.gather(_coefs, _ids)[:max_output_size]
+        classes = tf.gather(_classes, _ids)[:max_output_size]
+
+        return boxes, mask_coef, classes, scores
 

@@ -65,7 +65,6 @@ class Parser(object):
         # read and normalize the image
         image = data['image']
         
-
         #########################
         # _mean = tf.constant([103.94, 116.78, 123.68])
         # _std = tf.constant([57.38, 57.12, 58.40])
@@ -94,6 +93,7 @@ class Parser(object):
                                                                         self._proto_output_size, classes)
         masks = tf.expand_dims(masks, axis=-1)
         image = tf.image.resize(image, [self._output_size_h, self._output_size_w])
+
         masks = tf.image.resize(masks, [self._proto_output_size[0], self._proto_output_size[1]],
                                         method=tf.image.ResizeMethod.BILINEAR)
         masks = tf.squeeze(masks)

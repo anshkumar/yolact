@@ -5,6 +5,7 @@ This is a Tensorflow 2.3 implementation of the paper [YOLACT: Real-time Instance
 * Protobuf 3.0.0
 * Tensorflow (>=2.3.0)
 * cocoapi
+* OpenCV
 
 For detailed steps to install Tensorflow, follow the [Tensorflow installation instructions](https://www.tensorflow.org/install/). A typical user can install Tensorflow using one of the following commands:
 
@@ -73,7 +74,8 @@ If you have homebrew, download and install the protobuf with
 ```brew install protobuf```
 
 Alternately, run:
-```PROTOC_ZIP=protoc-3.3.0-osx-x86_64.zip
+```
+PROTOC_ZIP=protoc-3.3.0-osx-x86_64.zip
 curl -OL https://github.com/google/protobuf/releases/download/v3.3.0/$PROTOC_ZIP
 sudo unzip -o $PROTOC_ZIP -d /usr/local bin/protoc
 rm -f $PROTOC_ZIP
