@@ -7,6 +7,7 @@ import numpy as np
 assert tf.__version__.startswith('2')
 from detection import Detect
 from data import anchor
+from backbone import resnet
 
 class FrozenBatchNormalization(tf.keras.layers.BatchNormalization):
     def call(self, inputs, training=None):
@@ -14,43 +15,63 @@ class FrozenBatchNormalization(tf.keras.layers.BatchNormalization):
 
 class Yolact(tf.keras.Model):
     """
-        Creating the YOLCAT Architecture
+        Creating the YOLACT Architecture
         Arguments:
 
     """
 
-    def __init__(self, img_h, img_w, fpn_channels, num_class, num_mask, aspect_ratio, scales):
+    def __init__(self, img_h, img_w, fpn_channels, num_class, num_mask, 
+                 aspect_ratio, scales, use_dcn=False):
         super(Yolact, self).__init__()
         out = ['conv3_block4_out', 'conv4_block6_out', 'conv5_block3_out']
         # use pre-trained ResNet50
         # Keras BatchNormalization problem 
         # https://github.com/keras-team/keras/pull/9965#issuecomment-501933060
         tf.keras.layers.BatchNormalization = FrozenBatchNormalization
-        base_model = tf.keras.applications.ResNet50(input_shape=(img_h, img_w, 3),
-                                                    include_top=False,
-                                                    layers=tf.keras.layers,
-                                                    weights='imagenet')
+
+        if not use_dcn:
+            base_model = resnet.ResNet50(input_shape=(img_h,img_w,3),
+                                                        include_top=False,
+                                                        layers=tf.keras.layers,
+                                                        weights='imagenet')
+        else:
+            base_model = resnet.ResNet50(input_shape=(img_h,img_w,3),
+                                                        include_top=False,
+                                                        layers=tf.keras.layers,
+                                                        weights='imagenet',
+                                                        dcn_layers=[False, True, True, True])
         # extract certain feature maps for FPN
         self.backbone_resnet = tf.keras.Model(inputs=base_model.input,
-                                              outputs=[base_model.get_layer(x).output for x in out])
+                                              outputs=[
+                                              base_model.get_layer(x).output 
+                                              for x in out])
         
         # Calculating feature map size
         # https://stackoverflow.com/a/44242277/4582711
-        # https://github.com/tensorflow/tensorflow/issues/4297#issuecomment-246080982
-        self.feature_map_size = np.array([list(base_model.get_layer(x).output.shape[1:3]) for x in out])
-        out_height_p6 = np.ceil((self.feature_map_size[-1, 0]).astype(np.float32) / float(2))
-        out_width_p6  = np.ceil((self.feature_map_size[-1, 1]).astype(np.float32) / float(2))
+        # https://github.com/tensorflow/tensorflow/issues/4297#issuecomment-\
+        # 246080982
+        self.feature_map_size = np.array(
+            [list(base_model.get_layer(x).output.shape[1:3]) for x in out])
+        out_height_p6 = np.ceil(
+            (self.feature_map_size[-1, 0]).astype(np.float32) / float(2))
+        out_width_p6  = np.ceil(
+            (self.feature_map_size[-1, 1]).astype(np.float32) / float(2))
         out_height_p7 = np.ceil(out_height_p6 / float(2))
         out_width_p7  = np.ceil(out_width_p6/ float(2))
-        self.feature_map_size = np.concatenate((self.feature_map_size, [[out_height_p6, out_width_p6], [out_height_p7, out_width_p7]]), axis=0)
-        self.protonet_out_size = self.feature_map_size[0]*2 # Only one upsampling on p3 
+        self.feature_map_size = np.concatenate(
+            (self.feature_map_size, 
+            [[out_height_p6, out_width_p6], [out_height_p7, out_width_p7]]), 
+            axis=0)
+        # Only one upsampling on p3 
+        self.protonet_out_size = self.feature_map_size[0]*2 
 
         self.backbone_fpn = FeaturePyramidNeck(fpn_channels)
         self.protonet = ProtoNet(num_mask)
 
         # semantic segmentation branch to boost feature richness
-        self.semantic_segmentation = tf.keras.layers.Conv2D(num_class-1, (1, 1), 1, padding="same",
-                                                            kernel_initializer=tf.keras.initializers.glorot_uniform())
+        self.semantic_segmentation = tf.keras.layers.Conv2D(
+            num_class-1, (1, 1), 1, padding="same",
+            kernel_initializer=tf.keras.initializers.glorot_uniform())
 
         anchorobj = anchor.Anchor(img_size_h=img_h,img_size_w=img_w,
                               feature_map_size=self.feature_map_size,
@@ -63,12 +84,15 @@ class Yolact(tf.keras.Model):
         # print("num anchor per feature map: ", self.num_anchor)
 
         # shared prediction head
-        # Here, len(aspect_ratio) is passed as during prior calculations, individula scale is selected for each layer.
-        # So, when scale are [24, 48, 96, 130, 192] that means 24 is for p3; 48 is for p4 and so on.
+        # Here, len(aspect_ratio) is passed as during prior calculations, 
+        # individula scale is selected for each layer.
+        # So, when scale are [24, 48, 96, 130, 192] that means 24 is for p3; 
+        # 48 is for p4 and so on.
         # So, number of priors for that layer will be HxWxlen(aspect_ratio)
         # Hence, passing len(aspect_ratio)
         # This implementation differs from the original used in yolact
-        self.predictionHead = PredictionModule(256, len(aspect_ratio), num_class, num_mask)
+        self.predictionHead = PredictionModule(256, len(aspect_ratio), 
+                                               num_class, num_mask)
 
         # post-processing for evaluation
         self.detect = Detect(num_class, bkg_label=0, top_k=200,

@@ -7,7 +7,7 @@ class YOLACTLoss(object):
                  loss_weight_box=1.5,
                  loss_weight_mask=2.0,
                  loss_seg=1,
-                 neg_pos_ratio=3,
+                 neg_pos_ratio=4,
                  max_masks_for_train=100):
         self._loss_weight_cls = loss_weight_cls
         self._loss_weight_box = loss_weight_box
@@ -137,7 +137,7 @@ class YOLACTLoss(object):
         pos_indices = tf.where(conf_gt > 0 )
         loss_c = tf.tensor_scatter_nd_update(loss_c, pos_indices, tf.zeros(tf.shape(pos_indices)[0])) # filter out pos boxes
         num_pos = tf.math.count_nonzero(tf.greater(conf_gt,0), axis=1, keepdims=True)
-        num_neg = tf.clip_by_value(num_pos * self._neg_pos_ratio, clip_value_min=tf.constant(0, dtype=tf.int64), clip_value_max=tf.cast(tf.shape(conf_gt)[1]-1, tf.int64))
+        num_neg = tf.clip_by_value(num_pos * self._neg_pos_ratio, clip_value_min=tf.constant(self._neg_pos_ratio, dtype=tf.int64), clip_value_max=tf.cast(tf.shape(conf_gt)[1]-1, tf.int64))
 
         neutrals_indices = tf.where(conf_gt < 0 )
         loss_c = tf.tensor_scatter_nd_update(loss_c, neutrals_indices, tf.zeros(tf.shape(neutrals_indices)[0])) # filter out neutrals (conf_gt = -1)

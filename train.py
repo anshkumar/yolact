@@ -1,6 +1,7 @@
 import datetime
 import contextlib
 import tensorflow as tf
+import tensorflow_model_optimization as tfmot
 # tf.config.experimental_run_functions_eagerly(True)
 # tf.debugging.enable_check_numerics()
 
@@ -10,6 +11,7 @@ from absl import flags
 from absl import logging
 
 import yolact
+from yolactModule import YOLACTModule
 from data import dataset_coco
 from loss import loss_yolact
 from utils import learning_rate_schedule
@@ -53,13 +55,18 @@ flags.DEFINE_float('momentum', 0.9,
                    'momentum')
 flags.DEFINE_float('weight_decay', 5 * 1e-4,
                    'weight_decay')
-flags.DEFINE_float('print_interval', 100,
+flags.DEFINE_float('print_interval', 1,
                    'number of iteration between printing loss')
 flags.DEFINE_float('save_interval', 1000,
                    'number of iteration between saving model(checkpoint)')
 flags.DEFINE_float('valid_iter', 1000,
                    'number of iteration during validation')
-
+flags.DEFINE_boolean('model_quantization', False,
+                    'do quantization aware training')
+flags.DEFINE_boolean('tflite_export', False,
+                    'Inference Module for TFLite-friendly models')
+flags.DEFINE_boolean('use_dcn', False,
+                    'use dcnv2 for base model')
 '''
 def _get_categories_list():
   
@@ -142,8 +149,12 @@ def main(argv):
                           num_class=FLAGS.num_class+1, # adding background class
                           num_mask=64,
                           aspect_ratio=[float(i) for i in FLAGS.aspect_ratio],
-                          scales=[int(i) for i in FLAGS.scale])
-
+                          scales=[int(i) for i in FLAGS.scale],
+                          use_dcn=FLAGS.use_dcn)
+    if FLAGS.model_quantization:
+      logging.info("Quantization aware training")
+      quantize_model = tfmot.quantization.keras.quantize_model
+      model = quantize_model(model)
     # -----------------------------------------------------------------
     # Creating dataloaders for training and validation
     logging.info("Creating the dataloader from: %s..." % FLAGS.tfrecord_dir)
@@ -196,8 +207,8 @@ def main(argv):
     lr_schedule = learning_rate_schedule.Yolact_LearningRateSchedule(warmup_steps=5000, warmup_lr=1e-4,
                                                                      initial_lr=FLAGS.lr, total_steps=FLAGS.total_steps)
     logging.info("Initiate the Optimizer and Loss function...")
-    optimizer = tf.keras.optimizers.SGD(learning_rate=lr_schedule, momentum=FLAGS.momentum)
-    # optimizer = tf.keras.optimizers.Adam(learning_rate=lr_schedule)
+    # optimizer = tf.keras.optimizers.SGD(learning_rate=lr_schedule, momentum=FLAGS.momentum)
+    optimizer = tf.keras.optimizers.Adam(learning_rate=lr_schedule)
     criterion = loss_yolact.YOLACTLoss()
     train_loss = tf.keras.metrics.Mean('train_loss', dtype=tf.float32)
     valid_loss = tf.keras.metrics.Mean('valid_loss', dtype=tf.float32)
@@ -382,7 +393,21 @@ def main(argv):
                                         v_seg.result()))
             if valid_loss.result() < best_val:
                 best_val = valid_loss.result()
-                model.save('./saved_models/saved_model_'+ str(valid_loss.result().numpy()))
+                if FLAGS.tflite_export:
+                  detection_module = YOLACTModule(model, True)
+                  # Getting the concrete function traces the graph and forces variables to
+                  # be constructed; only after this can we save the saved model.
+                  concrete_function = detection_module.inference_fn.get_concrete_function(
+                      tf.TensorSpec(
+                          shape=[FLAGS.batch_size, FLAGS.img_h, FLAGS.img_w, 3], dtype=tf.float32, name='input'))
+
+                  # Export SavedModel.
+                  tf.saved_model.save(
+                      detection_module,
+                      './saved_models/saved_model_'+ str(valid_loss.result().numpy()),
+                      signatures=concrete_function)
+                else:
+                  model.save('./saved_models/saved_model_'+ str(valid_loss.result().numpy()))
 
             # reset the metrics
             train_loss.reset_states()
