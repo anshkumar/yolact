@@ -1,6 +1,9 @@
 # YOLACT Real-time Instance Segmentation
 This is a Tensorflow 2.3 implementation of the paper [YOLACT: Real-time Instance Segmentation](https://arxiv.org/abs/1904.02689). The paper presents a fully-convolutional model for real- time instance segmentation that achieves 29.8 mAP on MS COCO at 33.5 fps evaluated on a single Titan Xp, which is significantly faster than any previous competitive approach. In this Repo implements "ResNet50-FPN". Unlike original implemetation of YOLACT in which image is resized to 550x550, this repo can handle image of size MxN.  <br/>
 
+### Updates:
+1) DCNv2 added.
+
 # Installation
 * Protobuf 3.0.0
 * Tensorflow (>=2.3.0)
@@ -88,6 +91,29 @@ Run the compilation process again:
 protoc protos/*.proto --python_out=.
 ```
 
+## Compile tensorflow addon for DCNv2 support
+1. Git clone https://github.com/tensorflow/addons.
+2. Apply the patch named `deformable_conv2d.patch`.
+3. Compile tensorflow addon. For example for cuda 10.1 
+```
+# Only CUDA 10.1 Update 1 
+cd addons
+export TF_NEED_CUDA="1"
+
+# Set these if the below defaults are different on your system
+export TF_CUDA_VERSION="10.1"
+export TF_CUDNN_VERSION="7"
+export CUDA_TOOLKIT_PATH="/usr/local/cuda"
+export CUDNN_INSTALL_PATH="/usr/lib/x86_64-linux-gnu"
+
+# This script links project with TensorFlow dependency
+python3 ./configure.py
+
+bazel build build_pip_pkg --cxxopt="-D_GLIBCXX_USE_CXX11_ABI=0"
+bazel-bin/build_pip_pkg artifacts
+```
+4. Pass `-use_dcn True` to train.py
+
 ## Create TFRecord for training 
 Refer to the tensorflow object detection api for tfrecord creation. ([link](https://github.com/tensorflow/models/blob/master/research/object_detection/g3doc/using_your_own_dataset.md))
 
@@ -123,7 +149,7 @@ For every example in your dataset, you should have the following information:
 Training procedure can be conducted directly by following command:
 ```
 python train.py -tfrecord_dir 'path of TFRecord files'
-				        -label_map 'path label_map.pbtxt'
+                -label_map 'path label_map.pbtxt'
                 -weights 'path to store weights' 
                 -train_iter 'number of  iteration for training'
                 -img_h 'image height'
