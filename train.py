@@ -27,8 +27,10 @@ tf.random.set_seed(1234)
 
 FLAGS = flags.FLAGS
 
-flags.DEFINE_string('tfrecord_dir', './data/coco',
-                    'directory of tfrecord')
+flags.DEFINE_string('tfrecord_train_dir', './data/coco/train',
+                    'directory of training tfrecord')
+flags.DEFINE_string('tfrecord_val_dir', './data/coco/val',
+                    'directory of validation tfrecord')
 flags.DEFINE_string('label_map', './label_map.pbtxt',
                     'path to label_map.pbtxt')
 flags.DEFINE_string('weights', './weights',
@@ -164,7 +166,7 @@ def main(argv):
                                                     protonet_out_size=model.protonet_out_size,
                                                     aspect_ratio=[float(i) for i in FLAGS.aspect_ratio], 
                                                     scale=[int(i) for i in FLAGS.scale],
-                                                    tfrecord_dir=FLAGS.tfrecord_dir,
+                                                    tfrecord_dir=FLAGS.tfrecord_train_dir,
                                                     batch_size=FLAGS.batch_size,
                                                     subset='train')
 
@@ -174,7 +176,7 @@ def main(argv):
                                                     protonet_out_size=model.protonet_out_size,
                                                     aspect_ratio=[float(i) for i in FLAGS.aspect_ratio], 
                                                     scale=[int(i) for i in FLAGS.scale],
-                                                    tfrecord_dir=FLAGS.tfrecord_dir,
+                                                    tfrecord_dir=FLAGS.tfrecord_val_dir,
                                                     batch_size=1,
                                                     subset='val')
     
