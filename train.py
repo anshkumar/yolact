@@ -410,7 +410,8 @@ def main(argv):
                       './saved_models/saved_model_'+ str(valid_loss.result().numpy()),
                       signatures=concrete_function)
                 else:
-                  model.save('./saved_models/saved_model_'+ str(valid_loss.result().numpy()))
+                  save_options = tf.saved_model.SaveOptions(namespace_whitelist=['Addons'])
+                  model.save('./saved_models/saved_model_'+ str(valid_loss.result().numpy()), options=save_options)
 
             # reset the metrics
             train_loss.reset_states()
