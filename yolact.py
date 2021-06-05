@@ -1,7 +1,7 @@
 import tensorflow as tf
 
 from layers.fpn import FeaturePyramidNeck
-from layers.head import PredictionModule
+from layers.head import PredictionModule, FastMaskIoUNet
 from layers.protonet import ProtoNet
 import numpy as np
 assert tf.__version__.startswith('2')
@@ -93,6 +93,7 @@ class Yolact(tf.keras.Model):
         # This implementation differs from the original used in yolact
         self.predictionHead = PredictionModule(256, len(aspect_ratio), 
                                                num_class, num_mask)
+        self.fastMaskIoUNet = FastMaskIoUNet(num_class)
 
         # post-processing for evaluation
         self.detect = Detect(num_class, bkg_label=0, top_k=200,

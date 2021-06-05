@@ -1,5 +1,38 @@
 import tensorflow as tf
 
+class FastMaskIoUNet(tf.keras.layers.Layer):
+
+    def __init__(self, num_class):
+        super(FastMaskIoUNet, self).__init__()
+        self.conv1 = tf.keras.layers.Conv2D(8, (3, 3), 2,
+                                           kernel_initializer=tf.keras.initializers.glorot_uniform(),
+                                           activation="relu")
+        self.conv2 = tf.keras.layers.Conv2D(16, (3, 3), 2,
+                                           kernel_initializer=tf.keras.initializers.glorot_uniform(),
+                                           activation="relu")
+        self.conv3 = tf.keras.layers.Conv2D(32, (3, 3), 2,
+                                           kernel_initializer=tf.keras.initializers.glorot_uniform(),
+                                           activation="relu")
+        self.conv4 = tf.keras.layers.Conv2D(64, (3, 3), 2,
+                                           kernel_initializer=tf.keras.initializers.glorot_uniform(),
+                                           activation="relu")
+        self.conv5 = tf.keras.layers.Conv2D(128, (3, 3), 2,
+                                           kernel_initializer=tf.keras.initializers.glorot_uniform(),
+                                           activation="relu")
+        self.conv6 = tf.keras.layers.Conv2D(num_class-1, (1, 1), 1,
+                                           kernel_initializer=tf.keras.initializers.glorot_uniform(),
+                                           activation="relu")
+
+    def call(self, x):
+        x = self.conv1(x)
+        x = self.conv2(x)
+        x = self.conv3(x)
+        x = self.conv4(x)
+        x = self.conv5(x)
+        x = self.conv6(x)
+        maskiou_p = tf.reduce_max(x, axis=(1,2))
+
+        return maskiou_p
 
 class PredictionModule(tf.keras.layers.Layer):
 

@@ -33,7 +33,7 @@ flags.DEFINE_string('label_map', './label_map.pbtxt',
                     'path to label_map.pbtxt')
 flags.DEFINE_string('weights', './weights',
                     'path to store weights')
-flags.DEFINE_integer('train_iter', 800000,
+flags.DEFINE_integer('train_iter', 1200000,
                      'iteraitons')
 flags.DEFINE_integer('batch_size', 1,
                      'train batch size')
@@ -207,8 +207,8 @@ def main(argv):
     lr_schedule = learning_rate_schedule.Yolact_LearningRateSchedule(warmup_steps=5000, warmup_lr=1e-4,
                                                                      initial_lr=FLAGS.lr, total_steps=FLAGS.total_steps)
     logging.info("Initiate the Optimizer and Loss function...")
-    # optimizer = tf.keras.optimizers.SGD(learning_rate=lr_schedule, momentum=FLAGS.momentum)
-    optimizer = tf.keras.optimizers.Adam(learning_rate=lr_schedule)
+    optimizer = tf.keras.optimizers.SGD(learning_rate=lr_schedule, momentum=FLAGS.momentum)
+    # optimizer = tf.keras.optimizers.Adam(learning_rate=lr_schedule)
     criterion = loss_yolact.YOLACTLoss()
     train_loss = tf.keras.metrics.Mean('train_loss', dtype=tf.float32)
     valid_loss = tf.keras.metrics.Mean('valid_loss', dtype=tf.float32)
@@ -268,7 +268,7 @@ def main(argv):
                       'remapping': True}):
             with tf.GradientTape() as tape:
                 output = model(image, training=True)
-                loc_loss, conf_loss, mask_loss, seg_loss, total_loss = criterion(output, labels, FLAGS.num_class+1)
+                loc_loss, conf_loss, mask_loss, seg_loss, total_loss = criterion(model, output, labels, FLAGS.num_class+1)
             grads = tape.gradient(total_loss, model.trainable_variables)
             optimizer.apply_gradients(zip(grads, model.trainable_variables))
             train_loss.update_state(total_loss)

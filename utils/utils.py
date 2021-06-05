@@ -107,9 +107,9 @@ def crop(mask_p, boxes, padding = 1):
     rows = tf.broadcast_to(rows, (tf.shape(mask_p)[0], tf.shape(mask_p)[1], tf.shape(mask_p)[2]))
 
     mask_left = tf.cast(cols, tf.float32) >= tf.reshape(x1, (1, 1, -1))
-    mask_right = tf.cast(cols, tf.float32) <= tf.reshape(x2, (1, 1, -1))
+    mask_right = tf.cast(cols, tf.float32) < tf.reshape(x2, (1, 1, -1))
     mask_bottom = tf.cast(rows, tf.float32) >= tf.reshape(y1, (1, 1, -1))
-    mask_top = tf.cast(rows, tf.float32) <= tf.reshape(y2, (1, 1, -1))
+    mask_top = tf.cast(rows, tf.float32) < tf.reshape(y2, (1, 1, -1))
 
     crop_mask = tf.math.logical_and(tf.math.logical_and(mask_left, mask_right), tf.math.logical_and(mask_bottom, mask_top))
     crop_mask = tf.cast(crop_mask, tf.float32)
