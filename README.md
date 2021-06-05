@@ -117,7 +117,7 @@ bazel-bin/build_pip_pkg artifacts
 
 I've compiled [tensorflow_addons-0.11.2](https://drive.google.com/file/d/1ClNgAukN_nVCOsdzzWbOqHRrld94HJcq/view?usp=sharing)(cuda 10.1, cudnn 7.6, tf 2.3.0) and [tensorflow_addons-0.13.0](https://drive.google.com/file/d/1Z5-9QAuXf_aUKUa2PIjXZ7TmS1K41UZI/view?usp=sharing)(cuda 11.2, cudnn 8.2, tf 2.5.0) for python3.6.
 
-For tf 2.5, change the header in `addons/tensorflow_addons/custom_ops/layers/cc/kernels/deformable_conv2d_op.h` from 
+Note: While compiling tensorflow addon for tf 2.5, change the header in `addons/tensorflow_addons/custom_ops/layers/cc/kernels/deformable_conv2d_op.h` from 
 ```
 #include "tensorflow/core/kernels/batch_matmul_op_impl.h"
 ```
