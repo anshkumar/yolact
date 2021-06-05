@@ -159,7 +159,7 @@ def main(argv):
       model = quantize_model(model)
     # -----------------------------------------------------------------
     # Creating dataloaders for training and validation
-    logging.info("Creating the dataloader from: %s..." % FLAGS.tfrecord_dir)
+    logging.info("Creating the training dataloader from: %s..." % FLAGS.tfrecord_train_dir)
     train_dataset = dataset_coco.prepare_dataloader(img_h=FLAGS.img_h, 
                                                     img_w=FLAGS.img_w,
                                                     feature_map_size=model.feature_map_size, 
@@ -170,6 +170,7 @@ def main(argv):
                                                     batch_size=FLAGS.batch_size,
                                                     subset='train')
 
+    logging.info("Creating the validation dataloader from: %s..." % FLAGS.tfrecord_val_dir)
     valid_dataset = dataset_coco.prepare_dataloader(img_h=FLAGS.img_h, 
                                                     img_w=FLAGS.img_w,
                                                     feature_map_size=model.feature_map_size, 
