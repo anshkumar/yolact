@@ -167,7 +167,6 @@ python train.py -tfrecord_train_dir 'path of TFRecord training files'
                 -save_interval 'interval for conducting validation'
                 -valid_iter 'number of iteration for validation'
 ```
-A sample file is given in `train.sh`
 
 # Inference 
 Inside `saved_models` there will be saved graphs according to the score of their validation. For an example `saved_model_0.19968511` is saved_model when the validation loss was 0.19968511. To run inference on using this saved_model see `infer.py`.
