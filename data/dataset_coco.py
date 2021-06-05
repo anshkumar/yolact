@@ -27,7 +27,7 @@ def prepare_dataloader(img_h, img_w, feature_map_size, protonet_out_size, aspect
                                   unmatched_threshold=0.5,
                                   mode=subset,
                                   proto_output_size=[int(protonet_out_size[0]), int(protonet_out_size[1])])
-    files = tf.io.matching_files(os.path.join(tfrecord_dir, "*.*" % subset))
+    files = tf.io.matching_files(os.path.join(tfrecord_dir, "*.*"))
     num_shards = tf.cast(tf.shape(files)[0], tf.int64)
     shards = tf.data.Dataset.from_tensor_slices(files)
     shards = shards.shuffle(num_shards)
