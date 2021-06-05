@@ -314,7 +314,7 @@ def main(argv):
                               'arithmetic_optimization': True,
                               'remapping': True}):
                     output = model(valid_image, training=False)
-                    valid_loc_loss, valid_conf_loss, valid_mask_loss, valid_seg_loss, valid_total_loss = criterion(output, valid_labels, FLAGS.num_class+1)
+                    valid_loc_loss, valid_conf_loss, valid_mask_loss, valid_seg_loss, valid_total_loss = criterion(model, output, valid_labels, FLAGS.num_class+1)
                     valid_loss.update_state(valid_total_loss)
 
                     _h = valid_image.shape[1]
