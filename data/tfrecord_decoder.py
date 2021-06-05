@@ -19,7 +19,7 @@ class TfExampleDecoder(object):
         }
 
     def _decode_image(self, parsed_tensors):
-        image = tf.io.decode_jpeg(parsed_tensors['image/encoded'])
+        image = tf.io.decode_jpeg(parsed_tensors['image/encoded'], channels=3)
         image.set_shape([None, None, 3])
         return image
 
