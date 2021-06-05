@@ -149,7 +149,8 @@ For every example in your dataset, you should have the following information:
 ### (3) Usage
 Training procedure can be conducted directly by following command:
 ```
-python train.py -tfrecord_dir 'path of TFRecord files'
+python train.py -tfrecord_train_dir 'path of TFRecord training files'
+                -tfrecord_val_dir 'path of TFRecord validation files'
                 -label_map 'path label_map.pbtxt'
                 -weights 'path to store weights' 
                 -train_iter 'number of  iteration for training'
