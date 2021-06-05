@@ -92,7 +92,7 @@ Run the compilation process again:
 protoc protos/*.proto --python_out=.
 ```
 
-## Compile tensorflow addon for DCNv2 support (for YOLACT++)
+## Compile tensorflow addon for DCNv2 support (YOLACT++)
 1. Git clone https://github.com/tensorflow/addons.
 2. Apply the patch named `deformable_conv2d.patch`.
 3. Compile tensorflow addon. For example for cuda 10.1 
