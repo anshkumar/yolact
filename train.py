@@ -47,7 +47,7 @@ flags.DEFINE_integer('img_w', 550,
                      'image width')
 flags.DEFINE_list('aspect_ratio', [1, 0.5, 2],
                    'comma-separated list of strings for aspect ratio')
-flags.DEFINE_list('scale', [24, 48, 96, 130, 192],
+flags.DEFINE_list('scale', [24, 48, 96, 192, 384],
                    'comma-separated list of strings for scales in pixels')
 flags.DEFINE_float('lr', 1e-3,
                    'learning rate')
@@ -59,9 +59,9 @@ flags.DEFINE_float('weight_decay', 5 * 1e-4,
                    'weight_decay')
 flags.DEFINE_float('print_interval', 100,
                    'number of iteration between printing loss')
-flags.DEFINE_float('save_interval', 1000,
+flags.DEFINE_float('save_interval', 10000,
                    'number of iteration between saving model(checkpoint)')
-flags.DEFINE_float('valid_iter', 1000,
+flags.DEFINE_float('valid_iter', 10000,
                    'number of iteration during validation')
 flags.DEFINE_boolean('model_quantization', False,
                     'do quantization aware training')
@@ -207,7 +207,7 @@ def main(argv):
 
     # -----------------------------------------------------------------
     # Choose the Optimizor, Loss Function, and Metrics, learning rate schedule
-    lr_schedule = learning_rate_schedule.Yolact_LearningRateSchedule(warmup_steps=5000, warmup_lr=1e-4,
+    lr_schedule = learning_rate_schedule.Yolact_LearningRateSchedule(warmup_steps=500, warmup_lr=1e-4,
                                                                      initial_lr=FLAGS.lr, total_steps=FLAGS.total_steps)
     logging.info("Initiate the Optimizer and Loss function...")
     optimizer = tf.keras.optimizers.SGD(learning_rate=lr_schedule, momentum=FLAGS.momentum)
@@ -218,10 +218,12 @@ def main(argv):
     loc = tf.keras.metrics.Mean('loc_loss', dtype=tf.float32)
     conf = tf.keras.metrics.Mean('conf_loss', dtype=tf.float32)
     mask = tf.keras.metrics.Mean('mask_loss', dtype=tf.float32)
+    mask_iou = tf.keras.metrics.Mean('mask_iou_loss', dtype=tf.float32)
     seg = tf.keras.metrics.Mean('seg_loss', dtype=tf.float32)
     v_loc = tf.keras.metrics.Mean('vloc_loss', dtype=tf.float32)
     v_conf = tf.keras.metrics.Mean('vconf_loss', dtype=tf.float32)
     v_mask = tf.keras.metrics.Mean('vmask_loss', dtype=tf.float32)
+    v_mask_iou = tf.keras.metrics.Mean('vmask_iou_loss', dtype=tf.float32)
     v_seg = tf.keras.metrics.Mean('vseg_loss', dtype=tf.float32)
 
     # -----------------------------------------------------------------
@@ -271,7 +273,7 @@ def main(argv):
                       'remapping': True}):
             with tf.GradientTape() as tape:
                 output = model(image, training=True)
-                loc_loss, conf_loss, mask_loss, seg_loss, total_loss = criterion(model, output, labels, FLAGS.num_class+1)
+                loc_loss, conf_loss, mask_loss, mask_iou_loss, seg_loss, total_loss = criterion(model, output, labels, FLAGS.num_class+1)
             grads = tape.gradient(total_loss, model.trainable_variables)
             optimizer.apply_gradients(zip(grads, model.trainable_variables))
             train_loss.update_state(total_loss)
@@ -279,22 +281,25 @@ def main(argv):
         loc.update_state(loc_loss)
         conf.update_state(conf_loss)
         mask.update_state(mask_loss)
+        mask_iou.update_state(mask_iou_loss)
         seg.update_state(seg_loss)
         with train_summary_writer.as_default():
             tf.summary.scalar('Total loss', train_loss.result(), step=iterations)
             tf.summary.scalar('Loc loss', loc.result(), step=iterations)
             tf.summary.scalar('Conf loss', conf.result(), step=iterations)
             tf.summary.scalar('Mask loss', mask.result(), step=iterations)
+            tf.summary.scalar('Mask IOU loss', mask_iou.result(), step=iterations)
             tf.summary.scalar('Seg loss', seg.result(), step=iterations)
 
         if iterations and iterations % FLAGS.print_interval == 0:
-            logging.info("Iteration {}, LR: {}, Total Loss: {}, B: {},  C: {}, M: {}, S:{} ".format(
+            logging.info("Iteration {}, LR: {}, Total Loss: {}, B: {},  C: {}, M: {}, I: {}, S:{} ".format(
                 iterations,
                 optimizer._decayed_lr(var_dtype=tf.float32),
                 train_loss.result(), 
                 loc.result(),
                 conf.result(),
                 mask.result(),
+                mask_iou.result(),
                 seg.result()
             ))
 
@@ -314,7 +319,7 @@ def main(argv):
                               'arithmetic_optimization': True,
                               'remapping': True}):
                     output = model(valid_image, training=False)
-                    valid_loc_loss, valid_conf_loss, valid_mask_loss, valid_seg_loss, valid_total_loss = criterion(model, output, valid_labels, FLAGS.num_class+1)
+                    valid_loc_loss, valid_conf_loss, valid_mask_loss, valid_mask_iou_loss, valid_seg_loss, valid_total_loss = criterion(model, output, valid_labels, FLAGS.num_class+1)
                     valid_loss.update_state(valid_total_loss)
 
                     _h = valid_image.shape[1]
@@ -367,6 +372,7 @@ def main(argv):
                 v_loc.update_state(valid_loc_loss)
                 v_conf.update_state(valid_conf_loss)
                 v_mask.update_state(valid_mask_loss)
+                v_mask_iou.update_state(valid_mask_iou_loss)
                 v_seg.update_state(valid_seg_loss)
                 valid_iter += 1
 
@@ -378,21 +384,24 @@ def main(argv):
                 tf.summary.scalar('V Loc loss', v_loc.result(), step=iterations)
                 tf.summary.scalar('V Conf loss', v_conf.result(), step=iterations)
                 tf.summary.scalar('V Mask loss', v_mask.result(), step=iterations)
+                tf.summary.scalar('V Mask IOU loss', v_mask_iou.result(), step=iterations)
                 tf.summary.scalar('V Seg loss', v_seg.result(), step=iterations)
 
-            train_template = 'Iteration {}, Train Loss: {}, Loc Loss: {},  Conf Loss: {}, Mask Loss: {}, Seg Loss: {}'
-            valid_template = 'Iteration {}, Valid Loss: {}, V Loc Loss: {},  V Conf Loss: {}, V Mask Loss: {}, Seg Loss: {}'
+            train_template = 'Iteration {}, Train Loss: {}, Loc Loss: {},  Conf Loss: {}, Mask Loss: {}, Mask IOU Loss: {}, Seg Loss: {}'
+            valid_template = 'Iteration {}, Valid Loss: {}, V Loc Loss: {},  V Conf Loss: {}, V Mask Loss: {}, V Mask IOU Loss: {}, Seg Loss: {}'
             logging.info(train_template.format(iterations + 1,
                                         train_loss.result(),
                                         loc.result(),
                                         conf.result(),
                                         mask.result(),
+                                        mask_iou.result(),
                                         seg.result()))
             logging.info(valid_template.format(iterations + 1,
                                         valid_loss.result(),
                                         v_loc.result(),
                                         v_conf.result(),
                                         v_mask.result(),
+                                        v_mask_iou.result(),
                                         v_seg.result()))
             if valid_loss.result() < best_val:
                 best_val = valid_loss.result()
@@ -418,12 +427,14 @@ def main(argv):
             loc.reset_states()
             conf.reset_states()
             mask.reset_states()
+            mask_iou.reset_states()
             seg.reset_states()
 
             valid_loss.reset_states()
             v_loc.reset_states()
             v_conf.reset_states()
             v_mask.reset_states()
+            v_mask_iou.reset_states()
             v_seg.reset_states()
 
 

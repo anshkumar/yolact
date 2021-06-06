@@ -5,13 +5,15 @@ from utils import utils
 class YOLACTLoss(object):
     def __init__(self, loss_weight_cls=1,
                  loss_weight_box=1.5,
-                 loss_weight_mask=6.0,
+                 loss_weight_mask=1.0,
+                 loss_weight_mask_iou=25.0,
                  loss_seg=1,
-                 neg_pos_ratio=4,
+                 neg_pos_ratio=6,
                  max_masks_for_train=100):
         self._loss_weight_cls = loss_weight_cls
         self._loss_weight_box = loss_weight_box
         self._loss_weight_mask = loss_weight_mask
+        self._loss_weight_mask_iou = loss_weight_mask_iou
         self._loss_weight_seg = loss_seg
         self._neg_pos_ratio = neg_pos_ratio
         self._max_masks_for_train = max_masks_for_train
@@ -51,10 +53,10 @@ class YOLACTLoss(object):
         loc_loss = self._loss_location(pred_offset, gt_offset, conf_gt) * self._loss_weight_box
         conf_loss = self._loss_class(pred_cls, num_classes, conf_gt) * self._loss_weight_cls
         # conf_loss = self._focal_conf_sigmoid_loss(pred_cls, num_classes, conf_gt) * self._loss_weight_cls
-        mask_loss = self._loss_mask(model, prior_max_index, pred_mask_coef, proto_out, masks, prior_max_box, conf_gt, classes) * self._loss_weight_mask
+        mask_loss, mask_iou_loss = self._loss_mask(model, prior_max_index, pred_mask_coef, proto_out, masks, prior_max_box, conf_gt, classes) 
         seg_loss = self._loss_semantic_segmentation(seg, masks, classes) * self._loss_weight_seg
-        total_loss = loc_loss + conf_loss + mask_loss + seg_loss
-        return loc_loss, conf_loss, mask_loss, seg_loss, total_loss
+        total_loss = loc_loss + conf_loss + mask_loss* self._loss_weight_mask + seg_loss + mask_iou_loss*self._loss_weight_mask_iou
+        return loc_loss, conf_loss, mask_loss* self._loss_weight_mask, mask_iou_loss*self._loss_weight_mask_iou, seg_loss, total_loss
 
     def _loss_location(self, pred_offset, gt_offset, conf_gt):
         # only compute losses from positive samples
@@ -65,9 +67,9 @@ class YOLACTLoss(object):
 
         # calculate the smoothL1(positive_pred, positive_gt) and return
         num_pos = tf.shape(gt_offset)[0]
-        smoothl1loss = tf.keras.losses.Huber(delta=1., reduction=tf.losses.Reduction.NONE)
+        smoothl1loss = tf.keras.losses.Huber(delta=1., reduction=tf.losses.Reduction.SUM)
         if tf.reduce_sum(tf.cast(num_pos, tf.float32)) > 0.0:
-            loss_loc = tf.reduce_sum(smoothl1loss(gt_offset, pred_offset)) / tf.reduce_sum(tf.cast(num_pos, tf.float32))
+            loss_loc = smoothl1loss(gt_offset, pred_offset) / tf.cast(num_pos, tf.float32)
         else:
             loss_loc = 0.0
 
@@ -108,7 +110,7 @@ class YOLACTLoss(object):
 
         return tf.reduce_sum(loss) / tf.reduce_sum(tf.cast(num_pos, tf.float32))
 
-    def _loss_class(self, pred_cls, num_cls, conf_gt, ohem_use_most_confident=False):
+    def _loss_class(self, pred_cls, num_cls, conf_gt, ohem_use_most_confident=True):
         # num_cls includes background
         batch_conf = tf.reshape(pred_cls, [-1, num_cls])
 
@@ -172,6 +174,7 @@ class YOLACTLoss(object):
         proto_w = shape_proto[2]
         num_batch = shape_proto[0]
         loss_m = 0.0
+        loss_iou = 0.0
 
         mask_gt = tf.transpose(mask_gt, (0,2,3,1)) #[batch, height, width, num_object]
 
@@ -212,7 +215,7 @@ class YOLACTLoss(object):
                 mask_p = utils.crop(mask_p, _pos_prior_box)  # _pos_prior_box.shape: (num_pos, 4)
                 # _pos_mask_gt = utils.crop(_pos_mask_gt, _pos_prior_box)
 
-            # mask_p = tf.clip_by_value(mask_p, clip_value_min=0.0, clip_value_max=1.0)
+            mask_p = tf.clip_by_value(mask_p, clip_value_min=0.0, clip_value_max=1.0)
 
             if use_weight_sum:
                 # The idea was borred from UNET weight loss function 
@@ -298,9 +301,9 @@ class YOLACTLoss(object):
             loss_i = smoothl1loss(maskiou_t, maskiou_p)
 
             loss_m /= (tf.cast(proto_h, tf.float32) * tf.cast(proto_w, tf.float32))
-            loss_m += loss_i
+            loss_iou += loss_i
 
-        return loss_m / tf.cast(num_batch, tf.float32)
+        return loss_m / tf.cast(num_batch, tf.float32), loss_iou #/ tf.cast(num_batch, tf.float32)
 
     def _mask_iou(self, mask1, mask2):
         intersection = tf.reduce_sum(mask1*mask2, axis=(0, 1))
