@@ -8,7 +8,7 @@ class YOLACTLoss(object):
                  loss_weight_mask=1.0,
                  loss_weight_mask_iou=25.0,
                  loss_seg=1,
-                 neg_pos_ratio=6,
+                 neg_pos_ratio=3,
                  max_masks_for_train=100):
         self._loss_weight_cls = loss_weight_cls
         self._loss_weight_box = loss_weight_box
@@ -108,9 +108,9 @@ class YOLACTLoss(object):
 
         loss = tf.gather_nd(tf.reduce_sum(loss, -1), keep)
 
-        return tf.reduce_sum(loss) / tf.reduce_sum(tf.cast(num_pos, tf.float32))
+        return tf.reduce_sum(loss) #/ tf.reduce_sum(tf.cast(num_pos, tf.float32))
 
-    def _loss_class(self, pred_cls, num_cls, conf_gt, ohem_use_most_confident=True):
+    def _loss_class(self, pred_cls, num_cls, conf_gt, ohem_use_most_confident=False):
         # num_cls includes background
         batch_conf = tf.reshape(pred_cls, [-1, num_cls])
 
@@ -204,8 +204,8 @@ class YOLACTLoss(object):
                 _pos_prior_box = tf.gather(_pos_prior_box, select)
                 
             num_pos = tf.shape(_pos_coef)[0]
-            _pos_mask_gt = tf.gather(_mask_gt, _pos_prior_index, axis=-1) 
-            _pos_class_gt = tf.gather(cur_class_gt, _pos_prior_index, axis=-1)   
+            pos_mask_gt = tf.gather(_mask_gt, _pos_prior_index, axis=-1) 
+            pos_class_gt = tf.gather(cur_class_gt, _pos_prior_index, axis=-1)   
             
             # mask assembly by linear combination
             mask_p = tf.linalg.matmul(proto_p[i], _pos_coef, transpose_a=False, transpose_b=True) # [proto_height, proto_width, num_pos]
@@ -213,9 +213,9 @@ class YOLACTLoss(object):
             # crop the pred (not real crop, zero out the area outside the gt box)
             if use_cropped_mask:
                 mask_p = utils.crop(mask_p, _pos_prior_box)  # _pos_prior_box.shape: (num_pos, 4)
-                # _pos_mask_gt = utils.crop(_pos_mask_gt, _pos_prior_box)
+                # pos_mask_gt = utils.crop(pos_mask_gt, _pos_prior_box)
 
-            mask_p = tf.clip_by_value(mask_p, clip_value_min=0.0, clip_value_max=1.0)
+            # mask_p = tf.clip_by_value(mask_p, clip_value_min=0.0, clip_value_max=1.0)
 
             if use_weight_sum:
                 # The idea was borred from UNET weight loss function 
@@ -228,47 +228,46 @@ class YOLACTLoss(object):
                 # gt_box_height = pos_get_csize[:, 3] * tf.cast(proto_h, tf.float32)
                 # _area_pos = gt_box_width * gt_box_height
                 # _area_neg = (tf.cast(proto_h, tf.float32) * tf.cast(proto_w, tf.float32)) - _area_pos
-                weight_ip = tf.zeros(tf.shape(_pos_mask_gt), dtype=tf.float32)
-                w_1 = 1 - tf.reduce_sum(_pos_mask_gt, [0,1]) / tf.cast(tf.shape(weight_ip)[0]*tf.shape(weight_ip)[1], tf.float32)
+                weight_ip = tf.zeros(tf.shape(pos_mask_gt), dtype=tf.float32)
+                w_1 = 1 - tf.reduce_sum(pos_mask_gt, [0,1]) / tf.cast(tf.shape(weight_ip)[0]*tf.shape(weight_ip)[1], tf.float32)
                 w_0 = 1 - w_1
 
-                w_1_index = tf.where(_pos_mask_gt == 1)
+                w_1_index = tf.where(pos_mask_gt == 1)
                 weight_sum = tf.tensor_scatter_nd_update(weight_ip, w_1_index, tf.ones(tf.shape(w_1_index)[0]))*(w_1)#*_area_neg/_area_pos)
-                w_0_index = tf.where(_pos_mask_gt == 0)
+                w_0_index = tf.where(pos_mask_gt == 0)
                 weight_ip = tf.tensor_scatter_nd_update(weight_ip, w_0_index, tf.ones(tf.shape(w_0_index)[0]))*w_0
                 weight_sum += weight_ip
-                mask_loss = tf.nn.weighted_cross_entropy_with_logits(_pos_mask_gt, mask_p, weight_sum)
+                mask_loss = tf.nn.weighted_cross_entropy_with_logits(pos_mask_gt, mask_p, weight_sum)
             else:
-                mask_loss = tf.nn.sigmoid_cross_entropy_with_logits(_pos_mask_gt, mask_p)
-
-            # Adding extra dimension as i/p and o/p shapes are different with "reduction" is set to None.
-            # https://github.com/tensorflow/tensorflow/issues/27190
-            # _pos_mask_gt = tf.transpose(_pos_mask_gt, (2,0,1))
-            # mask_p = tf.transpose(mask_p, (2,0,1))
-            # _pos_mask_gt = tf.reshape(_pos_mask_gt, [ -1, proto_h * proto_w])
-            # mask_p = tf.reshape(mask_p, [ -1, proto_h * proto_w])
-            # mask_loss = tf.keras.losses.binary_crossentropy(_pos_mask_gt, mask_p)
+                # Adding extra dimension as i/p and o/p shapes are different with "reduction" is set to None.
+                # https://github.com/tensorflow/tensorflow/issues/27190
+                _pos_mask_gt = tf.transpose(pos_mask_gt, (2,0,1))
+                _mask_p = tf.transpose(mask_p, (2,0,1))
+                _pos_mask_gt = tf.reshape(_pos_mask_gt, [ -1, proto_h * proto_w])
+                _mask_p = tf.reshape(_mask_p, [ -1, proto_h * proto_w])
+                smoothl1loss = tf.keras.losses.Huber(delta=1., reduction=tf.losses.Reduction.SUM)
+                mask_loss = smoothl1loss(_pos_mask_gt, _mask_p)                
             
             if old_num_pos > num_pos:
                 mask_loss *= tf.cast(old_num_pos / num_pos, tf.float32)
 
-            loss_m += tf.reduce_sum(mask_loss)
+            loss_m += mask_loss
 
             # Mask IOU loss
-            _pos_mask_gt_area = tf.reduce_sum(_pos_mask_gt, axis=(0,1))
-            select_indices = tf.where(_pos_mask_gt_area > 25 ) # Area threshold of 25 pixels
+            pos_mask_gt_area = tf.reduce_sum(pos_mask_gt, axis=(0,1))
+            select_indices = tf.where(pos_mask_gt_area > 25 ) # Area threshold of 25 pixels
 
             if tf.shape(select_indices)[0] == 0: # num_positives are zero
                 continue
 
             _pos_prior_box = tf.gather_nd(_pos_prior_box, select_indices)
             mask_p = tf.gather(mask_p, tf.squeeze(select_indices), axis=-1)
-            _pos_mask_gt = tf.gather(_pos_mask_gt, tf.squeeze(select_indices), axis=-1)
-            _pos_class_gt = tf.gather_nd(_pos_class_gt, select_indices)
+            pos_mask_gt = tf.gather(pos_mask_gt, tf.squeeze(select_indices), axis=-1)
+            pos_class_gt = tf.gather_nd(pos_class_gt, select_indices)
 
             mask_p = tf.cast(mask_p + 0.5, tf.uint8)
             mask_p = tf.cast(mask_p, tf.float32)
-            maskiou_t = self._mask_iou(mask_p, _pos_mask_gt)
+            maskiou_t = self._mask_iou(mask_p, pos_mask_gt)
 
             if tf.size(maskiou_t) == 1:
                 maskiou_t = tf.expand_dims(maskiou_t, axis=0)
@@ -276,10 +275,10 @@ class YOLACTLoss(object):
 
             maskiou_net_input_list.append(mask_p)
             maskiou_t_list.append(maskiou_t)
-            class_t_list.append(_pos_class_gt)
+            class_t_list.append(pos_class_gt)
 
         if len(maskiou_t_list) == 0:
-            loss_m /= (tf.cast(proto_h, tf.float32) * tf.cast(proto_w, tf.float32))
+            return loss_m , loss_iou
         else:
             maskiou_t = tf.concat(maskiou_t_list, axis=0)
             class_t = tf.concat(class_t_list, axis=0)
@@ -300,10 +299,9 @@ class YOLACTLoss(object):
             smoothl1loss = tf.keras.losses.Huber(delta=1.)
             loss_i = smoothl1loss(maskiou_t, maskiou_p)
 
-            loss_m /= (tf.cast(proto_h, tf.float32) * tf.cast(proto_w, tf.float32))
             loss_iou += loss_i
 
-        return loss_m / tf.cast(num_batch, tf.float32), loss_iou #/ tf.cast(num_batch, tf.float32)
+        return loss_m , loss_iou
 
     def _mask_iou(self, mask1, mask2):
         intersection = tf.reduce_sum(mask1*mask2, axis=(0, 1))
@@ -337,7 +335,10 @@ class YOLACTLoss(object):
             obj_cls = tf.expand_dims(cur_class_gt, axis=-1)
             segment_gt = tf.tensor_scatter_nd_max(segment_gt, indices=obj_cls, updates=masks)
             segment_gt = tf.transpose(segment_gt, perm=(1, 2, 0))
-            loss_s += tf.reduce_sum(tf.nn.sigmoid_cross_entropy_with_logits(segment_gt[:,:,1:], cur_segment)) #exclude background from segment_gt
+            
+            loss = tf.keras.losses.binary_crossentropy(segment_gt[:,:,1:], cur_segment,  from_logits=True)
+            loss = tf.math.reduce_sum(loss)
+            loss_s += loss
 
         loss_s /= (tf.cast(mask_h, tf.float32) * tf.cast(mask_w, tf.float32))
-        return loss_s/ tf.cast(batch_size, tf.float32)
+        return loss_s
