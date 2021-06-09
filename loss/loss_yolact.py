@@ -215,7 +215,7 @@ class YOLACTLoss(object):
                 mask_p = utils.crop(mask_p, _pos_prior_box)  # _pos_prior_box.shape: (num_pos, 4)
                 # pos_mask_gt = utils.crop(pos_mask_gt, _pos_prior_box)
 
-            # mask_p = tf.clip_by_value(mask_p, clip_value_min=0.0, clip_value_max=1.0)
+            mask_p = tf.clip_by_value(mask_p, clip_value_min=0.0, clip_value_max=1.0)
 
             if use_weight_sum:
                 # The idea was borred from UNET weight loss function 

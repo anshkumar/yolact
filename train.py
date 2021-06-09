@@ -31,6 +31,12 @@ flags.DEFINE_string('tfrecord_train_dir', './data/coco/train',
                     'directory of training tfrecord')
 flags.DEFINE_string('tfrecord_val_dir', './data/coco/val',
                     'directory of validation tfrecord')
+flags.DEFINE_string('checkpoints_dir', './checkpoints',
+                    'directory for saving checkpoints')
+flags.DEFINE_string('logs_dir', './logs',
+                    'directory for saving logs')
+flags.DEFINE_string('saved_models_dir', './saved_models',
+                    'directory for exporting saved_models')
 flags.DEFINE_string('label_map', './label_map.pbtxt',
                     'path to label_map.pbtxt')
 flags.DEFINE_string('weights', './weights',
@@ -232,8 +238,8 @@ def main(argv):
     # Ref: https://www.tensorflow.org/tensorboard/get_started
     logging.info("Setup the TensorBoard...")
     current_time = datetime.datetime.now().strftime("%Y%m%d-%H%M%S")
-    train_log_dir = './logs/gradient_tape/' + current_time + '/train'
-    test_log_dir = './logs/gradient_tape/' + current_time + '/test'
+    train_log_dir = FLAGS.logs_dir + '/train'
+    test_log_dir = FLAGS.logs_dir + '/test'
     train_summary_writer = tf.summary.create_file_writer(train_log_dir)
     test_summary_writer = tf.summary.create_file_writer(test_log_dir)
 
@@ -244,7 +250,7 @@ def main(argv):
     # setup checkpoints manager
     checkpoint = tf.train.Checkpoint(step=tf.Variable(1), optimizer=optimizer, model=model)
     manager = tf.train.CheckpointManager(
-        checkpoint, directory="./checkpoints", max_to_keep=5
+        checkpoint, directory=FLAGS.checkpoints_dir, max_to_keep=5
     )
     # restore from latest checkpoint and iteration
     status = checkpoint.restore(manager.latest_checkpoint)
