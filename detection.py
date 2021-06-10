@@ -1,6 +1,7 @@
 import numpy as np
 import tensorflow as tf
 from utils import standard_fields
+from utils import utils
 
 class Detect(object):
     """At test time, Detect is the final layer of SSD.  Decode location preds,
@@ -23,7 +24,7 @@ class Detect(object):
         self.use_fast_nms = False
         self.max_output_size = 300
 
-    def __call__(self, net_outs, trad_nms=True):
+    def __call__(self, net_outs, trad_nms=True, use_cropped_mask=True):
         """
         Args:
              pred_offset: (tensor) Loc preds from loc layers
@@ -90,6 +91,9 @@ class Detect(object):
                 _masks_coef = tf.sigmoid(_masks_coef) # [138, 138, NUM_BOX]
 
                 boxes, masks = self._sanitize(_masks_coef, box_thre)
+                if use_cropped_mask:
+                    masks = utils.crop(masks, boxes)
+
                 masks = tf.transpose(masks, (2,0,1))
 
                 _ind_boxes = tf.stack((tf.tile([b], num_detection), tf.range(0, tf.shape(box_thre)[0])), axis=-1) # Shape: (Number of updates, index of update)
