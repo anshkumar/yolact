@@ -18,7 +18,12 @@ from tensorflow.python.keras.utils import data_utils
 from tensorflow.python.keras.utils import layer_utils
 from tensorflow.python.lib.io import file_io
 from tensorflow.python.util.tf_export import keras_export
-from backbone import dcn_v2
+
+try:
+    from backbone import dcn_v2
+except:
+    print('DCN could not be imported. If you want to use YOLACT++ models, compile DCN. Check the README for instructions.')
+
 
 BASE_WEIGHTS_PATH = (
     'https://storage.googleapis.com/tensorflow/keras-applications/resnet/')
