@@ -208,7 +208,7 @@ def ResNet(stack_fn,
         BASE_WEIGHTS_PATH + file_name,
         cache_subdir='models',
         file_hash=file_hash)
-    model.load_weights(weights_path)
+    model.load_weights(weights_path, by_name=True)
   elif weights is not None:
     model.load_weights(weights)
 
@@ -268,7 +268,7 @@ def block1(x, filters, kernel_size=3, stride=1, conv_shortcut=True,
   return x
 
 
-def stack1(x, filters, blocks, stride1=2, use_dcn=False, name=None):
+def stack1(x, filters, blocks, stride1=2, use_dcn=False, skip_interval=False, name=None):
   """A set of stacked residual blocks.
 
   Arguments:
@@ -284,7 +284,10 @@ def stack1(x, filters, blocks, stride1=2, use_dcn=False, name=None):
   x = block1(x, filters, stride=stride1, use_dcn=use_dcn, name=name + '_block1')
   for i,j in zip(range(2, blocks + 1), range(1,blocks)):
     # Skip every 2 blocks
-    if j % 3 == 0 and use_dcn:
+    if j % 3 == 0 and use_dcn and skip_interval:
+      x = block1(x, filters, conv_shortcut=False, use_dcn=True, 
+                 name=name + '_block' + str(i))
+    elif use_dcn and not skip_interval:
       x = block1(x, filters, conv_shortcut=False, use_dcn=True, 
                  name=name + '_block' + str(i))
     else:
@@ -354,7 +357,7 @@ def block2(x, filters, kernel_size=3, stride=1, conv_shortcut=False,
   return x
 
 
-def stack2(x, filters, blocks, stride1=2, use_dcn=False, name=None):
+def stack2(x, filters, blocks, stride1=2, use_dcn=False, skip_interval=False, name=None):
   """A set of stacked residual blocks.
 
   Arguments:
@@ -372,7 +375,9 @@ def stack2(x, filters, blocks, stride1=2, use_dcn=False, name=None):
 
   for i,j in zip(range(2, blocks), range(1,blocks-1)):
     # Skip every 2 blocks
-    if j % 3 == 0 and use_dcn:
+    if j % 3 == 0 and use_dcn and skip_interval:
+      x = block2(x, filters, use_dcn=True, name=name + '_block' + str(i))
+    elif use_dcn and not skip_interval:
       x = block2(x, filters, use_dcn=True, name=name + '_block' + str(i))
     else:
       x = block2(x, filters, use_dcn=False, name=name + '_block' + str(i))
@@ -461,7 +466,7 @@ def block3(x,
   return x
 
 
-def stack3(x, filters, blocks, stride1=2, groups=32, use_dcn=False, name=None):
+def stack3(x, filters, blocks, stride1=2, groups=32, use_dcn=False, skip_interval=False, name=None):
   """A set of stacked residual blocks.
 
   Arguments:
@@ -480,7 +485,16 @@ def stack3(x, filters, blocks, stride1=2, groups=32, use_dcn=False, name=None):
 
   for i,j in zip(range(2, blocks + 1), range(1,blocks)):
     # Skip every 2 blocks
-    if j % 3 == 0 and use_dcn:
+    if j % 3 == 0 and use_dcn and skip_interval:
+      x = block3(
+          x,
+          filters,
+          groups=groups,
+          conv_shortcut=False,
+          use_dcn=True, 
+          name=name + '_block' + str(i))
+
+    elif use_dcn and not skip_interval:
       x = block3(
           x,
           filters,
@@ -511,10 +525,6 @@ def ResNet50(include_top=True,
   if not isinstance(dcn_layers, list):
     raise ValueError("dcn_layers must be a list of booleans.")
 
-  if True in dcn_layers:
-    if weights is not None and not file_io.file_exists_v2(weights):
-      weights = None
-
   def stack_fn(x):
     x = stack1(x, 64, 3, stride1=1, use_dcn=dcn_layers[0], name='conv2')
     x = stack1(x, 128, 4, use_dcn=dcn_layers[1], name='conv3')
@@ -537,15 +547,11 @@ def ResNet101(include_top=True,
   if not isinstance(dcn_layers, list):
     raise ValueError("dcn_layers must be a list of booleans.")
 
-  if True in dcn_layers:
-    if weights is not None and not file_io.file_exists_v2(weights):
-      weights = None
-
   def stack_fn(x):
-    x = stack1(x, 64, 3, stride1=1, use_dcn=dcn_layers[0], name='conv2')
-    x = stack1(x, 128, 4, use_dcn=dcn_layers[1], name='conv3')
-    x = stack1(x, 256, 23, use_dcn=dcn_layers[2], name='conv4')
-    return stack1(x, 512, 3, use_dcn=dcn_layers[3], name='conv5')
+    x = stack1(x, 64, 3, stride1=1, use_dcn=dcn_layers[0], skip_interval=True, name='conv2')
+    x = stack1(x, 128, 4, use_dcn=dcn_layers[1], skip_interval=True, name='conv3')
+    x = stack1(x, 256, 23, use_dcn=dcn_layers[2], skip_interval=True, name='conv4')
+    return stack1(x, 512, 3, use_dcn=dcn_layers[3], skip_interval=True, name='conv5')
 
   return ResNet(stack_fn, False, True, 'resnet101', include_top, weights,
                 input_tensor, input_shape, pooling, classes, **kwargs)
@@ -563,15 +569,11 @@ def ResNet152(include_top=True,
   if not isinstance(dcn_layers, list):
     raise ValueError("dcn_layers must be a list of booleans.")
 
-  if True in dcn_layers:
-    if weights is not None and not file_io.file_exists_v2(weights):
-      weights = None
-
   def stack_fn(x):
-    x = stack1(x, 64, 3, stride1=1, use_dcn=dcn_layers[0], name='conv2')
-    x = stack1(x, 128, 8, use_dcn=dcn_layers[1], name='conv3')
-    x = stack1(x, 256, 36, use_dcn=dcn_layers[2], name='conv4')
-    return stack1(x, 512, 3, use_dcn=dcn_layers[3], name='conv5')
+    x = stack1(x, 64, 3, stride1=1, use_dcn=dcn_layers[0], skip_interval=True, name='conv2')
+    x = stack1(x, 128, 8, use_dcn=dcn_layers[1], skip_interval=True, name='conv3')
+    x = stack1(x, 256, 36, use_dcn=dcn_layers[2], skip_interval=True, name='conv4')
+    return stack1(x, 512, 3, use_dcn=dcn_layers[3], skip_interval=True, name='conv5')
 
   return ResNet(stack_fn, False, True, 'resnet152', include_top, weights,
                 input_tensor, input_shape, pooling, classes, **kwargs)

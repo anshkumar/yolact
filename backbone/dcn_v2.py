@@ -37,7 +37,8 @@ class DCN(tf.keras.layers.Layer):
                                           padding=padding,
                                           use_bias=True,
                                           kernel_initializer='zeros',
-                                          bias_initializer='zeros',)
+                                          bias_initializer='zeros',
+                                          name='conv_offset_mask')
 
         self.conv = DeformableConv2D(
             filters=filters,

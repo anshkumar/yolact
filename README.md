@@ -163,7 +163,6 @@ Training procedure can be conducted directly by following command:
 python train.py -tfrecord_train_dir 'path of TFRecord training files'
                 -tfrecord_val_dir 'path of TFRecord validation files'
                 -label_map 'path label_map.pbtxt'
-                -weights 'path to store weights' 
                 -train_iter 'number of  iteration for training'
                 -img_h 'image height'
                 -img_w 'image width'

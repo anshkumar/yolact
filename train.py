@@ -9,7 +9,7 @@ import tensorflow_model_optimization as tfmot
 from absl import app
 from absl import flags
 from absl import logging
-
+import os
 import yolact
 from yolactModule import YOLACTModule
 from data import dataset_coco
@@ -39,8 +39,6 @@ flags.DEFINE_string('saved_models_dir', './saved_models',
                     'directory for exporting saved_models')
 flags.DEFINE_string('label_map', './label_map.pbtxt',
                     'path to label_map.pbtxt')
-flags.DEFINE_string('weights', './weights',
-                    'path to store weights')
 flags.DEFINE_integer('train_iter', 1200000,
                      'iteraitons')
 flags.DEFINE_integer('batch_size', 1,
@@ -67,7 +65,7 @@ flags.DEFINE_float('print_interval', 100,
                    'number of iteration between printing loss')
 flags.DEFINE_float('save_interval', 10000,
                    'number of iteration between saving model(checkpoint)')
-flags.DEFINE_float('valid_iter', 10000,
+flags.DEFINE_float('valid_iter', 5001,
                    'number of iteration during validation')
 flags.DEFINE_boolean('model_quantization', False,
                     'do quantization aware training')
@@ -238,8 +236,8 @@ def main(argv):
     # Ref: https://www.tensorflow.org/tensorboard/get_started
     logging.info("Setup the TensorBoard...")
     current_time = datetime.datetime.now().strftime("%Y%m%d-%H%M%S")
-    train_log_dir = FLAGS.logs_dir + '/train'
-    test_log_dir = FLAGS.logs_dir + '/test'
+    train_log_dir = os.path.join(FLAGS.logs_dir,'train')
+    test_log_dir = os.path.join(FLAGS.logs_dir, 'test')
     train_summary_writer = tf.summary.create_file_writer(train_log_dir)
     test_summary_writer = tf.summary.create_file_writer(test_log_dir)
 
@@ -422,11 +420,11 @@ def main(argv):
                   # Export SavedModel.
                   tf.saved_model.save(
                       detection_module,
-                      './saved_models/saved_model_'+ str(valid_loss.result().numpy()),
+                      os.path.join(FLAGS.saved_models_dir, 'saved_model_'+ str(valid_loss.result().numpy())),
                       signatures=concrete_function)
                 else:
                   save_options = tf.saved_model.SaveOptions(namespace_whitelist=['Addons'])
-                  model.save('./saved_models/saved_model_'+ str(valid_loss.result().numpy()), options=save_options)
+                  model.save(os.path.join(FLAGS.saved_models_dir, 'saved_model_'+ str(valid_loss.result().numpy())), options=save_options)
 
             # reset the metrics
             train_loss.reset_states()
