@@ -33,6 +33,8 @@ flags.DEFINE_string('tfrecord_val_dir', './data/coco/val',
                     'directory of validation tfrecord')
 flags.DEFINE_string('checkpoints_dir', './checkpoints',
                     'directory for saving checkpoints')
+flags.DEFINE_string('pretrained_checkpoints', '',
+                    'path to pretrained checkpoints')
 flags.DEFINE_string('logs_dir', './logs',
                     'directory for saving logs')
 flags.DEFINE_string('saved_models_dir', './saved_models',
@@ -55,7 +57,7 @@ flags.DEFINE_list('scale', [24, 48, 96, 192, 384],
                    'comma-separated list of strings for scales in pixels')
 flags.DEFINE_float('lr', 1e-3,
                    'learning rate')
-flags.DEFINE_float('total_steps', 1200000,
+flags.DEFINE_float('lr_total_steps', 1200000,
                    'learning rate total steps')
 flags.DEFINE_float('momentum', 0.9,
                    'momentum')
@@ -73,6 +75,8 @@ flags.DEFINE_boolean('tflite_export', False,
                     'Inference Module for TFLite-friendly models')
 flags.DEFINE_boolean('use_dcn', False,
                     'use dcnv2 for base model')
+flags.DEFINE_boolean('use_mask_iou', False,
+                    'use mask_iou for loss')
 '''
 def _get_categories_list():
   
@@ -212,11 +216,11 @@ def main(argv):
     # -----------------------------------------------------------------
     # Choose the Optimizor, Loss Function, and Metrics, learning rate schedule
     lr_schedule = learning_rate_schedule.Yolact_LearningRateSchedule(warmup_steps=500, warmup_lr=1e-4,
-                                                                     initial_lr=FLAGS.lr, total_steps=FLAGS.total_steps)
+                                                                     initial_lr=FLAGS.lr, total_steps=FLAGS.lr_total_steps)
     logging.info("Initiate the Optimizer and Loss function...")
     optimizer = tf.keras.optimizers.SGD(learning_rate=lr_schedule, momentum=FLAGS.momentum)
     # optimizer = tf.keras.optimizers.Adam(learning_rate=lr_schedule)
-    criterion = loss_yolact.YOLACTLoss()
+    criterion = loss_yolact.YOLACTLoss(use_mask_iou=FLAGS.use_mask_iou)
     train_loss = tf.keras.metrics.Mean('train_loss', dtype=tf.float32)
     valid_loss = tf.keras.metrics.Mean('valid_loss', dtype=tf.float32)
     loc = tf.keras.metrics.Mean('loc_loss', dtype=tf.float32)
@@ -255,7 +259,15 @@ def main(argv):
     if manager.latest_checkpoint:
         logging.info("Restored from {}".format(manager.latest_checkpoint))
     else:
-        logging.info("Initializing from scratch.")
+        if FLAGS.pretrained_checkpoints != '':
+          feature_extractor_model = tf.train.Checkpoint(
+            backbone_resnet=model.backbone_resnet, 
+            backbone_fpn=model.backbone_fpn)
+          ckpt = tf.train.Checkpoint(model=feature_extractor_model)
+          ckpt.restore(FLAGS.pretrained_checkpoints).expect_partial().assert_existing_objects_matched()
+          logging.info("Backbone restored from {}".format(FLAGS.pretrained_checkpoints))
+        else:
+          logging.info("Initializing from scratch.")
 
     # COCO evalator for showing MAP
     coco_evaluator = coco_evaluation.CocoMaskEvaluator(_get_categories_list(FLAGS.label_map))

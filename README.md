@@ -7,7 +7,7 @@ This is a Tensorflow 2.3 implementation of the paper [YOLACT: Real-time Instance
 
 # Installation
 * Protobuf 3.0.0
-* Tensorflow (>=2.3.0)
+* Tensorflow (>=2.3.0), Tensorflow Addons
 * cocoapi
 * OpenCV
 
@@ -113,7 +113,7 @@ python3 ./configure.py
 bazel build build_pip_pkg --cxxopt="-D_GLIBCXX_USE_CXX11_ABI=0"
 bazel-bin/build_pip_pkg artifacts
 ```
-4. Pass `-use_dcn True` to train.py
+4. Pass `-use_dcn True` and `-use_mask_iou True` to train.py
 
 I've compiled [tensorflow_addons-0.11.2](tensorflow_addons/tensorflow_addons-0.11.2-cp36-cp36m-linux_x86_64.whl)(cuda 10.1, cudnn 7.6, tf 2.3.0) and [tensorflow_addons-0.13.0](tensorflow_addons/tensorflow_addons-0.13.0-cp36-cp36m-linux_x86_64.whl)(cuda 11.2, cudnn 8.2, tf 2.5.0) for python3.6.
 
@@ -162,6 +162,7 @@ Training procedure can be conducted directly by following command:
 ```
 python train.py -tfrecord_train_dir 'path of TFRecord training files'
                 -tfrecord_val_dir 'path of TFRecord validation files'
+                -pretrained_checkpoints 'path to pre-trained checkpoints (if any)'
                 -label_map 'path label_map.pbtxt'
                 -train_iter 'number of  iteration for training'
                 -img_h 'image height'

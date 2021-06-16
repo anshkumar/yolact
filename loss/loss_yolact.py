@@ -1,4 +1,5 @@
 import tensorflow as tf
+import tensorflow_addons as tfa
 import time
 from utils import utils
 
@@ -9,7 +10,8 @@ class YOLACTLoss(object):
                  loss_weight_mask_iou=25.0,
                  loss_seg=1,
                  neg_pos_ratio=3,
-                 max_masks_for_train=100):
+                 max_masks_for_train=100, 
+                 use_mask_iou=False):
         self._loss_weight_cls = loss_weight_cls
         self._loss_weight_box = loss_weight_box
         self._loss_weight_mask = loss_weight_mask
@@ -18,6 +20,7 @@ class YOLACTLoss(object):
         self._neg_pos_ratio = neg_pos_ratio
         self._max_masks_for_train = max_masks_for_train
         self._epsilon = tf.convert_to_tensor(tf.keras.backend.epsilon(), tf.float32)
+        self.use_mask_iou = use_mask_iou
 
     def __call__(self, model, pred, label, num_classes):
         """
@@ -51,8 +54,8 @@ class YOLACTLoss(object):
 
         # calculate num_pos
         loc_loss = self._loss_location(pred_offset, gt_offset, conf_gt) * self._loss_weight_box
-        conf_loss = self._loss_class(pred_cls, num_classes, conf_gt) * self._loss_weight_cls
-        # conf_loss = self._focal_conf_sigmoid_loss(pred_cls, num_classes, conf_gt) * self._loss_weight_cls
+        # conf_loss = self._loss_class(pred_cls, num_classes, conf_gt) * self._loss_weight_cls
+        conf_loss = self._focal_conf_sigmoid_loss(pred_cls, num_classes, conf_gt) * self._loss_weight_cls
         mask_loss, mask_iou_loss = self._loss_mask(model, prior_max_index, pred_mask_coef, proto_out, masks, prior_max_box, conf_gt, classes) 
         seg_loss = self._loss_semantic_segmentation(seg, masks, classes) * self._loss_weight_seg
         total_loss = loc_loss + conf_loss + mask_loss* self._loss_weight_mask + seg_loss + mask_iou_loss*self._loss_weight_mask_iou
@@ -78,39 +81,18 @@ class YOLACTLoss(object):
     def _focal_conf_sigmoid_loss(self, pred_cls, num_cls, conf_gt, focal_loss_alpha=0.75, focal_loss_gamma=2):
         """
         Focal loss but using sigmoid like the original paper.
-        Note: To make things mesh easier, the network still predicts 81 class confidences in this mode.
-              Because retinanet originally only predicts 80, we simply just don't use pred_cls[..., 0]
         """
-        num_pos = tf.math.count_nonzero(tf.greater(conf_gt,0), axis=1, keepdims=True)
-        conf_gt = tf.reshape(conf_gt, -1) # [batch_size*num_priors]
-        pred_cls = tf.reshape(pred_cls, [-1, num_cls]) # [batch_size*num_priors, num_classes]
-
-        # Ignore neutral samples (class < 0)
-        keep = tf.where(conf_gt >= 0 )
-        neutrals_indices = tf.where(conf_gt < 0 )
-        conf_gt = tf.tensor_scatter_nd_update(conf_gt, neutrals_indices, tf.zeros(tf.shape(neutrals_indices)[0], dtype=tf.int64)) # filter out neutrals (conf_gt = -1)
-
-        # Compute a one-hot embedding of conf_gt
-        conf_one_gt = tf.one_hot(conf_gt, depth=num_cls)
-        conf_pm_gt  = conf_one_gt * 2 - 1 # -1 if background, +1 if forground for specific class
-
-        logpt = tf.math.log_sigmoid(pred_cls * conf_pm_gt) # note: 1 - sigmoid(x) = sigmoid(-x)
-        pt = tf.math.exp(logpt)
-
-        at = focal_loss_alpha * conf_one_gt + (1 - focal_loss_alpha) * (1 - conf_one_gt)
-
-        # Achieving following in tf
-        # at[..., 0] = 0 # Set alpha for the background class to 0 because sigmoid focal loss doesn't use it
-        ind = tf.stack([tf.range(tf.shape(at)[0]), tf.zeros(tf.shape(at)[0], dtype=tf.int32)], axis=1)
-        at = tf.tensor_scatter_nd_update(at, ind, tf.zeros(tf.shape(ind)[0]))
-
-        loss = -at * (1 - pt) ** focal_loss_gamma * logpt
-
-        loss = tf.gather_nd(tf.reduce_sum(loss, -1), keep)
-
-        return tf.reduce_sum(loss) #/ tf.reduce_sum(tf.cast(num_pos, tf.float32))
+        labels = tf.one_hot(conf_gt, depth=num_cls)
+        fl = tfa.losses.SigmoidFocalCrossEntropy(from_logits=True, reduction=tf.keras.losses.Reduction.AUTO)
+        loss = fl(y_true=labels, y_pred=pred_cls)
+        return loss
 
     def _loss_class(self, pred_cls, num_cls, conf_gt, ohem_use_most_confident=False):
+        loss_conf = tf.reduce_mean(tf.nn.sparse_softmax_cross_entropy_with_logits(
+                                       labels=tf.cast(conf_gt, dtype=tf.int32), logits=pred_cls))
+        return loss_conf
+
+    def _loss_class_ohem(self, pred_cls, num_cls, conf_gt, ohem_use_most_confident=False):
         # num_cls includes background
         batch_conf = tf.reshape(pred_cls, [-1, num_cls])
 
@@ -254,28 +236,29 @@ class YOLACTLoss(object):
             loss_m += mask_loss
 
             # Mask IOU loss
-            pos_mask_gt_area = tf.reduce_sum(pos_mask_gt, axis=(0,1))
-            select_indices = tf.where(pos_mask_gt_area > 25 ) # Area threshold of 25 pixels
+            if self.use_mask_iou:
+                pos_mask_gt_area = tf.reduce_sum(pos_mask_gt, axis=(0,1))
+                select_indices = tf.where(pos_mask_gt_area > 25 ) # Area threshold of 25 pixels
 
-            if tf.shape(select_indices)[0] == 0: # num_positives are zero
-                continue
+                if tf.shape(select_indices)[0] == 0: # num_positives are zero
+                    continue
 
-            _pos_prior_box = tf.gather_nd(_pos_prior_box, select_indices)
-            mask_p = tf.gather(mask_p, tf.squeeze(select_indices), axis=-1)
-            pos_mask_gt = tf.gather(pos_mask_gt, tf.squeeze(select_indices), axis=-1)
-            pos_class_gt = tf.gather_nd(pos_class_gt, select_indices)
+                _pos_prior_box = tf.gather_nd(_pos_prior_box, select_indices)
+                mask_p = tf.gather(mask_p, tf.squeeze(select_indices), axis=-1)
+                pos_mask_gt = tf.gather(pos_mask_gt, tf.squeeze(select_indices), axis=-1)
+                pos_class_gt = tf.gather_nd(pos_class_gt, select_indices)
 
-            mask_p = tf.cast(mask_p + 0.5, tf.uint8)
-            mask_p = tf.cast(mask_p, tf.float32)
-            maskiou_t = self._mask_iou(mask_p, pos_mask_gt)
+                mask_p = tf.cast(mask_p + 0.5, tf.uint8)
+                mask_p = tf.cast(mask_p, tf.float32)
+                maskiou_t = self._mask_iou(mask_p, pos_mask_gt)
 
-            if tf.size(maskiou_t) == 1:
-                maskiou_t = tf.expand_dims(maskiou_t, axis=0)
-                mask_p = tf.expand_dims(mask_p, axis=-1)
+                if tf.size(maskiou_t) == 1:
+                    maskiou_t = tf.expand_dims(maskiou_t, axis=0)
+                    mask_p = tf.expand_dims(mask_p, axis=-1)
 
-            maskiou_net_input_list.append(mask_p)
-            maskiou_t_list.append(maskiou_t)
-            class_t_list.append(pos_class_gt)
+                maskiou_net_input_list.append(mask_p)
+                maskiou_t_list.append(maskiou_t)
+                class_t_list.append(pos_class_gt)
 
         if len(maskiou_t_list) == 0:
             return loss_m , loss_iou
