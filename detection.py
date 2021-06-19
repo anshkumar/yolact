@@ -10,19 +10,16 @@ class Detect(object):
     confidence score and locations, as the predicted masks.
     """
 
-    def __init__(self, num_classes, bkg_label, top_k, conf_thresh, nms_thresh):
+    def __init__(self, num_classes, max_output_size, per_class_max_output_size, conf_thresh, nms_thresh):
         self.num_classes = num_classes
-        self.background_label = bkg_label
-        self.top_k = top_k
         # Parameters used in nms.
         self.nms_thresh = nms_thresh
         if nms_thresh <= 0:
             raise ValueError('nms_threshold must be non negative.')
         self.conf_thresh = conf_thresh
-        
-        self.use_cross_class_nms = False
         self.use_fast_nms = False
         self.max_output_size = 300
+        self.per_class_max_output_size = 100
 
     def __call__(self, net_outs, trad_nms=True, use_cropped_mask=True):
         """
@@ -71,10 +68,10 @@ class Detect(object):
 
         for b in range(batch_size):
             # filter predicted boxes according the class score
-            class_thre = tf.boolean_mask(class_p[b], class_p_max[b] > 0.3)
-            coef_thre = tf.boolean_mask(coef_p[b], class_p_max[b] > 0.3)
-            raw_boxes = tf.boolean_mask(box_p[b], class_p_max[b] > 0.3)
-            raw_anchors = tf.boolean_mask(anchors, class_p_max[b] > 0.3)
+            class_thre = tf.boolean_mask(class_p[b], class_p_max[b] > self.conf_thresh)
+            coef_thre = tf.boolean_mask(coef_p[b], class_p_max[b] > self.conf_thresh)
+            raw_boxes = tf.boolean_mask(box_p[b], class_p_max[b] > self.conf_thresh)
+            raw_anchors = tf.boolean_mask(anchors, class_p_max[b] > self.conf_thresh)
 
             # decode only selected boxes
             box_thre = self._decode(raw_boxes, raw_anchors)  # [27429, 4]
@@ -83,7 +80,7 @@ class Detect(object):
                 if not trad_nms:
                     box_thre, coef_thre, class_ids, class_thre = _fast_nms(box_thre, coef_thre, class_thre)
                 else:
-                    box_thre, coef_thre, class_ids, class_thre = self._traditional_nms(box_thre, coef_thre, class_thre)
+                    box_thre, coef_thre, class_ids, class_thre = self._traditional_nms(box_thre, coef_thre, class_thre, score_threshold=self.conf_thresh, iou_threshold=self.nms_thresh, max_class_output_size=self.per_class_max_output_size)
 
                 num_detection = [tf.shape(box_thre)[0]]
 
@@ -209,7 +206,7 @@ class Detect(object):
 
         return boxes, masks
 
-    def _traditional_nms(self, boxes, mask_coef, scores, iou_threshold=0.5, score_threshold=0.3, max_class_output_size=100, max_output_size=300, soft_nms_sigma=0.5):
+    def _traditional_nms(self, boxes, mask_coef, scores, iou_threshold=0.5, score_threshold=0.15, max_class_output_size=100, max_output_size=300, soft_nms_sigma=0.5):
         num_classes = tf.shape(scores)[1]
 
         _num_coef = tf.shape(mask_coef)[1]

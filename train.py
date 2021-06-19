@@ -1,6 +1,7 @@
 import datetime
 import contextlib
 import tensorflow as tf
+import tensorflow_addons as tfa
 import tensorflow_model_optimization as tfmot
 # tf.config.experimental_run_functions_eagerly(True)
 # tf.debugging.enable_check_numerics()
@@ -57,6 +58,8 @@ flags.DEFINE_list('scale', [24, 48, 96, 192, 384],
                    'comma-separated list of strings for scales in pixels')
 flags.DEFINE_float('lr', 1e-3,
                    'learning rate')
+flags.DEFINE_float('warmup_lr', 1e-4,
+                   'learning rate')
 flags.DEFINE_float('lr_total_steps', 1200000,
                    'learning rate total steps')
 flags.DEFINE_float('momentum', 0.9,
@@ -65,9 +68,9 @@ flags.DEFINE_float('weight_decay', 5 * 1e-4,
                    'weight_decay')
 flags.DEFINE_float('print_interval', 100,
                    'number of iteration between printing loss')
-flags.DEFINE_float('save_interval', 10000,
+flags.DEFINE_float('save_interval', 14786,
                    'number of iteration between saving model(checkpoint)')
-flags.DEFINE_float('valid_iter', 5001,
+flags.DEFINE_float('valid_iter', 5000,
                    'number of iteration during validation')
 flags.DEFINE_boolean('model_quantization', False,
                     'do quantization aware training')
@@ -82,7 +85,9 @@ def _get_categories_list():
   
 '''
 def _validate_label_map(label_map):
-  # https://github.com/tensorflow/models/blob/67fd2bef6500c14b95e0b0de846960ed13802405/research/object_detection/utils/label_map_util.py#L34
+  # https://github.com/tensorflow/models/blob/
+  # 67fd2bef6500c14b95e0b0de846960ed13802405/research/object_detection/utils/
+  # label_map_util.py#L34
   """Checks if a label map is valid.
   Args:
     label_map: StringIntLabelMap to validate.
@@ -97,7 +102,9 @@ def _validate_label_map(label_map):
       raise ValueError('Label map id 0 is reserved for the background label')
 
 def load_labelmap(path):
-  # https://github.com/tensorflow/models/blob/67fd2bef6500c14b95e0b0de846960ed13802405/research/object_detection/utils/label_map_util.py#L159
+  # https://github.com/tensorflow/models/blob/
+  # 67fd2bef6500c14b95e0b0de846960ed13802405/research/object_detection/utils/
+  # label_map_util.py#L159
   """Loads label map proto.
   Args:
     path: path to StringIntLabelMap proto text file.
@@ -115,7 +122,9 @@ def load_labelmap(path):
   return label_map
 
 def _get_categories_list(label_map_path):
-    # https://github.com/tensorflow/models/blob/67fd2bef6500c14b95e0b0de846960ed13802405/research/cognitive_planning/label_map_util.py#L73
+    # https://github.com/tensorflow/models/blob/\
+    # 67fd2bef6500c14b95e0b0de846960ed13802405/research/cognitive_planning/
+    # label_map_util.py#L73
     '''
     return [{
           'id': 1,
@@ -153,73 +162,68 @@ def main(argv):
     # -----------------------------------------------------------------
     # Creating the instance of the model specified.
     logging.info("Creating the model instance of YOLACT")
-    model = yolact.Yolact(img_h=FLAGS.img_h, 
-                          img_w=FLAGS.img_w,
-                          fpn_channels=256,
-                          num_class=FLAGS.num_class+1, # adding background class
-                          num_mask=64,
-                          aspect_ratio=[float(i) for i in FLAGS.aspect_ratio],
-                          scales=[int(i) for i in FLAGS.scale],
-                          use_dcn=FLAGS.use_dcn)
+    model = yolact.Yolact(
+      img_h=FLAGS.img_h, 
+      img_w=FLAGS.img_w,
+      fpn_channels=256,
+      num_class=FLAGS.num_class+1, # adding background class
+      num_mask=32,
+      aspect_ratio=[float(i) for i in FLAGS.aspect_ratio],
+      scales=[int(i) for i in FLAGS.scale],
+      use_dcn=FLAGS.use_dcn)
+
     if FLAGS.model_quantization:
       logging.info("Quantization aware training")
       quantize_model = tfmot.quantization.keras.quantize_model
       model = quantize_model(model)
     # -----------------------------------------------------------------
     # Creating dataloaders for training and validation
-    logging.info("Creating the training dataloader from: %s..." % FLAGS.tfrecord_train_dir)
-    train_dataset = dataset_coco.prepare_dataloader(img_h=FLAGS.img_h, 
-                                                    img_w=FLAGS.img_w,
-                                                    feature_map_size=model.feature_map_size, 
-                                                    protonet_out_size=model.protonet_out_size,
-                                                    aspect_ratio=[float(i) for i in FLAGS.aspect_ratio], 
-                                                    scale=[int(i) for i in FLAGS.scale],
-                                                    tfrecord_dir=FLAGS.tfrecord_train_dir,
-                                                    batch_size=FLAGS.batch_size,
-                                                    subset='train')
+    logging.info("Creating the training dataloader from: %s..." % \
+      FLAGS.tfrecord_train_dir)
+    train_dataset = dataset_coco.prepare_dataloader(
+      img_h=FLAGS.img_h, 
+      img_w=FLAGS.img_w,
+      feature_map_size=model.feature_map_size, 
+      protonet_out_size=model.protonet_out_size,
+      aspect_ratio=[float(i) for i in FLAGS.aspect_ratio], 
+      scale=[int(i) for i in FLAGS.scale],
+      tfrecord_dir=FLAGS.tfrecord_train_dir,
+      batch_size=FLAGS.batch_size,
+      subset='train')
 
-    logging.info("Creating the validation dataloader from: %s..." % FLAGS.tfrecord_val_dir)
-    valid_dataset = dataset_coco.prepare_dataloader(img_h=FLAGS.img_h, 
-                                                    img_w=FLAGS.img_w,
-                                                    feature_map_size=model.feature_map_size, 
-                                                    protonet_out_size=model.protonet_out_size,
-                                                    aspect_ratio=[float(i) for i in FLAGS.aspect_ratio], 
-                                                    scale=[int(i) for i in FLAGS.scale],
-                                                    tfrecord_dir=FLAGS.tfrecord_val_dir,
-                                                    batch_size=1,
-                                                    subset='val')
+    logging.info("Creating the validation dataloader from: %s..." % \
+      FLAGS.tfrecord_val_dir)
+    valid_dataset = dataset_coco.prepare_dataloader(
+      img_h=FLAGS.img_h, 
+      img_w=FLAGS.img_w,
+      feature_map_size=model.feature_map_size, 
+      protonet_out_size=model.protonet_out_size,
+      aspect_ratio=[float(i) for i in FLAGS.aspect_ratio], 
+      scale=[int(i) for i in FLAGS.scale],
+      tfrecord_dir=FLAGS.tfrecord_val_dir,
+      batch_size=1,
+      subset='val')
     
-
-    # add weight decay
-    def add_weight_decay(model, weight_decay):
-        # https://github.com/keras-team/keras/issues/12053
-        if (weight_decay is None) or (weight_decay == 0.0):
-            return
-
-        # recursion inside the model
-        def add_decay_loss(m, factor):
-            if isinstance(m, tf.keras.Model):
-                for layer in m.layers:
-                    add_decay_loss(layer, factor)
-            else:
-                for param in m.trainable_weights:
-                    with tf.keras.backend.name_scope('weight_regularizer'):
-                        regularizer = lambda: tf.keras.regularizers.l2(factor)(param)
-                        m.add_loss(regularizer)
-
-        # weight decay and l2 regularization differs by a factor of 2
-        add_decay_loss(model, weight_decay/2.0)
-        return
-
-    add_weight_decay(model, FLAGS.weight_decay)
-
     # -----------------------------------------------------------------
     # Choose the Optimizor, Loss Function, and Metrics, learning rate schedule
-    lr_schedule = learning_rate_schedule.Yolact_LearningRateSchedule(warmup_steps=500, warmup_lr=1e-4,
-                                                                     initial_lr=FLAGS.lr, total_steps=FLAGS.lr_total_steps)
+    # lr_schedule = learning_rate_schedule.Yolact_LearningRateSchedule(
+    #   warmup_steps=500, 
+    #   warmup_lr=FLAGS.warmup_lr,
+    #   initial_lr=FLAGS.lr, 
+    #   total_steps=FLAGS.lr_total_steps)
+    lr_schedule = tf.optimizers.schedules.PiecewiseConstantDecay(
+      [280000, 360000, 400000], 
+      [FLAGS.lr, 0.1*FLAGS.lr, 0.01*FLAGS.lr, 0.001*FLAGS.lr])
+
     logging.info("Initiate the Optimizer and Loss function...")
-    optimizer = tf.keras.optimizers.SGD(learning_rate=lr_schedule, momentum=FLAGS.momentum)
-    # optimizer = tf.keras.optimizers.Adam(learning_rate=lr_schedule)
+    optimizer = tfa.optimizers.SGDW(
+      learning_rate=lr_schedule, 
+      momentum=FLAGS.momentum, 
+      weight_decay=FLAGS.weight_decay)
+    # wd = lambda: FLAGS.weight_decay * lr_schedule(lr_schedule.global_step)
+    # optimizer = tfa.optimizers.AdamW(
+    #   learning_rate=lr_schedule, 
+    #   weight_decay=FLAGS.weight_decay)
     criterion = loss_yolact.YOLACTLoss(use_mask_iou=FLAGS.use_mask_iou)
     train_loss = tf.keras.metrics.Mean('train_loss', dtype=tf.float32)
     valid_loss = tf.keras.metrics.Mean('valid_loss', dtype=tf.float32)
@@ -250,7 +254,8 @@ def main(argv):
     logging.info("Start the training process...")
 
     # setup checkpoints manager
-    checkpoint = tf.train.Checkpoint(step=tf.Variable(1), optimizer=optimizer, model=model)
+    checkpoint = tf.train.Checkpoint(
+      step=tf.Variable(1), optimizer=optimizer, model=model)
     manager = tf.train.CheckpointManager(
         checkpoint, directory=FLAGS.checkpoints_dir, max_to_keep=5
     )
@@ -264,13 +269,16 @@ def main(argv):
             backbone_resnet=model.backbone_resnet, 
             backbone_fpn=model.backbone_fpn)
           ckpt = tf.train.Checkpoint(model=feature_extractor_model)
-          ckpt.restore(FLAGS.pretrained_checkpoints).expect_partial().assert_existing_objects_matched()
-          logging.info("Backbone restored from {}".format(FLAGS.pretrained_checkpoints))
+          ckpt.restore(FLAGS.pretrained_checkpoints).\
+            expect_partial().assert_existing_objects_matched()
+          logging.info("Backbone restored from {}".format(
+            FLAGS.pretrained_checkpoints))
         else:
           logging.info("Initializing from scratch.")
 
     # COCO evalator for showing MAP
-    coco_evaluator = coco_evaluation.CocoMaskEvaluator(_get_categories_list(FLAGS.label_map))
+    coco_evaluator = coco_evaluation.CocoMaskEvaluator(
+      _get_categories_list(FLAGS.label_map))
 
     best_val = 1e10
     iterations = checkpoint.step.numpy()
@@ -289,7 +297,10 @@ def main(argv):
                       'remapping': True}):
             with tf.GradientTape() as tape:
                 output = model(image, training=True)
-                loc_loss, conf_loss, mask_loss, mask_iou_loss, seg_loss, total_loss = criterion(model, output, labels, FLAGS.num_class+1)
+
+                loc_loss, conf_loss, mask_loss, mask_iou_loss, seg_loss, \
+                total_loss = criterion(model, output, labels, FLAGS.num_class+1)
+
             grads = tape.gradient(total_loss, model.trainable_variables)
             optimizer.apply_gradients(zip(grads, model.trainable_variables))
             train_loss.update_state(total_loss)
@@ -299,16 +310,30 @@ def main(argv):
         mask.update_state(mask_loss)
         mask_iou.update_state(mask_iou_loss)
         seg.update_state(seg_loss)
+
         with train_summary_writer.as_default():
-            tf.summary.scalar('Total loss', train_loss.result(), step=iterations)
-            tf.summary.scalar('Loc loss', loc.result(), step=iterations)
-            tf.summary.scalar('Conf loss', conf.result(), step=iterations)
-            tf.summary.scalar('Mask loss', mask.result(), step=iterations)
-            tf.summary.scalar('Mask IOU loss', mask_iou.result(), step=iterations)
-            tf.summary.scalar('Seg loss', seg.result(), step=iterations)
+            tf.summary.scalar('Total loss', 
+              train_loss.result(), step=iterations)
+
+            tf.summary.scalar('Loc loss', 
+              loc.result(), step=iterations)
+
+            tf.summary.scalar('Conf loss', 
+              conf.result(), step=iterations)
+
+            tf.summary.scalar('Mask loss', 
+              mask.result(), step=iterations)
+
+            tf.summary.scalar('Mask IOU loss', 
+              mask_iou.result(), step=iterations)
+
+            tf.summary.scalar('Seg loss', 
+              seg.result(), step=iterations)
 
         if iterations and iterations % FLAGS.print_interval == 0:
-            logging.info("Iteration {}, LR: {}, Total Loss: {}, B: {},  C: {}, M: {}, I: {}, S:{} ".format(
+            logging.info(
+                "Iteration {}, LR: {}, Total Loss: {}, B: {},  C: {}, M: {}, \
+                I: {}, S:{} ".format(
                 iterations,
                 optimizer._decayed_lr(var_dtype=tf.float32),
                 train_loss.result(), 
@@ -322,7 +347,10 @@ def main(argv):
         if iterations and iterations % FLAGS.save_interval == 0:
             # save checkpoint
             save_path = manager.save()
-            logging.info("Saved checkpoint for step {}: {}".format(int(checkpoint.step), save_path))
+
+            logging.info("Saved checkpoint for step {}: {}".format(
+              int(checkpoint.step), save_path))
+
             # validation
             valid_iter = 0
             for valid_image, valid_labels in valid_dataset:
@@ -335,7 +363,11 @@ def main(argv):
                               'arithmetic_optimization': True,
                               'remapping': True}):
                     output = model(valid_image, training=False)
-                    valid_loc_loss, valid_conf_loss, valid_mask_loss, valid_mask_iou_loss, valid_seg_loss, valid_total_loss = criterion(model, output, valid_labels, FLAGS.num_class+1)
+
+                    valid_loc_loss, valid_conf_loss, valid_mask_loss, \
+                    valid_mask_iou_loss, valid_seg_loss, valid_total_loss = \
+                    criterion(model, output, valid_labels, FLAGS.num_class+1)
+
                     valid_loss.update_state(valid_total_loss)
 
                     _h = valid_image.shape[1]
@@ -356,9 +388,9 @@ def main(argv):
                     coco_evaluator.add_single_ground_truth_image_info(
                         image_id='image'+str(valid_iter),
                         groundtruth_dict={
-                            standard_fields.InputDataFields.groundtruth_boxes: gt_boxes,
-                            standard_fields.InputDataFields.groundtruth_classes: gt_classes,
-                            standard_fields.InputDataFields.groundtruth_instance_masks: gt_masked_image
+                          standard_fields.InputDataFields.groundtruth_boxes: gt_boxes,
+                          standard_fields.InputDataFields.groundtruth_classes: gt_classes,
+                          standard_fields.InputDataFields.groundtruth_instance_masks: gt_masked_image
                         })
 
                     det_num = output['num_detections'][0].numpy()
@@ -396,15 +428,31 @@ def main(argv):
             coco_evaluator.clear()
 
             with test_summary_writer.as_default():
-                tf.summary.scalar('V Total loss', valid_loss.result(), step=iterations)
-                tf.summary.scalar('V Loc loss', v_loc.result(), step=iterations)
-                tf.summary.scalar('V Conf loss', v_conf.result(), step=iterations)
-                tf.summary.scalar('V Mask loss', v_mask.result(), step=iterations)
-                tf.summary.scalar('V Mask IOU loss', v_mask_iou.result(), step=iterations)
-                tf.summary.scalar('V Seg loss', v_seg.result(), step=iterations)
+                tf.summary.scalar('V Total loss', 
+                  valid_loss.result(), step=iterations)
 
-            train_template = 'Iteration {}, Train Loss: {}, Loc Loss: {},  Conf Loss: {}, Mask Loss: {}, Mask IOU Loss: {}, Seg Loss: {}'
-            valid_template = 'Iteration {}, Valid Loss: {}, V Loc Loss: {},  V Conf Loss: {}, V Mask Loss: {}, V Mask IOU Loss: {}, Seg Loss: {}'
+                tf.summary.scalar('V Loc loss', 
+                  v_loc.result(), step=iterations)
+
+                tf.summary.scalar('V Conf loss', 
+                  v_conf.result(), step=iterations)
+
+                tf.summary.scalar('V Mask loss', 
+                  v_mask.result(), step=iterations)
+
+                tf.summary.scalar('V Mask IOU loss', 
+                  v_mask_iou.result(), step=iterations)
+
+                tf.summary.scalar('V Seg loss', 
+                  v_seg.result(), step=iterations)
+
+            train_template = 'Iteration {}, Train Loss: {}, Loc Loss: {},  \
+              Conf Loss: {}, Mask Loss: {}, Mask IOU Loss: {}, Seg Loss: {}'
+
+            valid_template = 'Iteration {}, Valid Loss: {}, V Loc Loss: {},  \
+              V Conf Loss: {}, V Mask Loss: {}, V Mask IOU Loss: {}, \
+              Seg Loss: {}'
+
             logging.info(train_template.format(iterations + 1,
                                         train_loss.result(),
                                         loc.result(),
@@ -435,8 +483,13 @@ def main(argv):
                       os.path.join(FLAGS.saved_models_dir, 'saved_model_'+ str(valid_loss.result().numpy())),
                       signatures=concrete_function)
                 else:
-                  save_options = tf.saved_model.SaveOptions(namespace_whitelist=['Addons'])
-                  model.save(os.path.join(FLAGS.saved_models_dir, 'saved_model_'+ str(valid_loss.result().numpy())), options=save_options)
+                  save_options = tf.saved_model.SaveOptions(
+                    namespace_whitelist=['Addons'])
+                  
+                  model.save(os.path.join(
+                    FLAGS.saved_models_dir, 
+                    'saved_model_'+ str(valid_loss.result().numpy())), 
+                  options=save_options)
 
             # reset the metrics
             train_loss.reset_states()

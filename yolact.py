@@ -9,10 +9,6 @@ from detection import Detect
 from data import anchor
 from backbone import resnet
 
-class FrozenBatchNormalization(tf.keras.layers.BatchNormalization):
-    def call(self, inputs, training=None):
-        return super().call(inputs=inputs, training=False)
-
 class Yolact(tf.keras.Model):
     """
         Creating the YOLACT Architecture
@@ -24,22 +20,22 @@ class Yolact(tf.keras.Model):
                  aspect_ratio, scales, use_dcn=False):
         super(Yolact, self).__init__()
         out = ['conv3_block4_out', 'conv4_block6_out', 'conv5_block3_out']
-        # use pre-trained ResNet50
-        # Keras BatchNormalization problem 
-        # https://github.com/keras-team/keras/pull/9965#issuecomment-501933060
-        tf.keras.layers.BatchNormalization = FrozenBatchNormalization
 
         if not use_dcn:
-            base_model = resnet.ResNet50(input_shape=(img_h,img_w,3),
-                                                        include_top=False,
-                                                        layers=tf.keras.layers,
-                                                        weights='imagenet')
+            base_model = resnet.ResNet50(
+                input_shape=(img_h,img_w,3),
+                include_top=False,
+                layers=tf.keras.layers,
+                weights='imagenet')
+            base_model.trainable = False # Freeze the convolutional base
         else:
-            base_model = resnet.ResNet50(input_shape=(img_h,img_w,3),
-                                                        include_top=False,
-                                                        layers=tf.keras.layers,
-                                                        weights='imagenet',
-                                                        dcn_layers=[False, True, True, True])
+            base_model = resnet.ResNet50(
+                input_shape=(img_h,img_w,3),
+                include_top=False,
+                layers=tf.keras.layers,
+                weights='imagenet',
+                dcn_layers=[False, True, True, True])
+        
         # extract certain feature maps for FPN
         self.backbone_resnet = tf.keras.Model(inputs=base_model.input,
                                               outputs=[
@@ -80,9 +76,7 @@ class Yolact(tf.keras.Model):
 
         self.num_anchors = anchorobj.num_anchors
         self.priors = anchorobj.anchors
-        # print("prior shape:", self.priors.shape)
-        # print("num anchor per feature map: ", self.num_anchor)
-
+        
         # shared prediction head
         # Here, len(aspect_ratio) is passed as during prior calculations, 
         # individula scale is selected for each layer.
@@ -96,14 +90,20 @@ class Yolact(tf.keras.Model):
         self.fastMaskIoUNet = FastMaskIoUNet(num_class)
 
         # post-processing for evaluation
-        self.detect = Detect(num_class, bkg_label=0, top_k=200,
-                conf_thresh=0.05, nms_thresh=0.5)
+        self.detect = Detect(num_class, max_output_size=300, 
+            per_class_max_output_size=100,
+            conf_thresh=0.05, nms_thresh=0.5)
         self.max_output_size = 300
 
     @tf.function
     def call(self, inputs, training=False):
         # backbone(ResNet + FPN)
-        c3, c4, c5 = self.backbone_resnet(inputs)
+        inputs = tf.cast(inputs, tf.float32)
+        inputs = tf.keras.applications.resnet50.preprocess_input(inputs)
+
+        # https://www.tensorflow.org/tutorials/images/transfer_learning#\
+        # important_note_about_batchnormalization_layers
+        c3, c4, c5 = self.backbone_resnet(inputs, training=False)
         fpn_out = self.backbone_fpn(c3, c4, c5)
 
         # Protonet branch

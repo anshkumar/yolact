@@ -27,7 +27,8 @@ class Yolact_LearningRateSchedule(tf.keras.optimizers.schedules.LearningRateSche
         self.warmup_lr = warmup_lr
         self.initial_lr = initial_lr
         self.total_steps = total_steps
-
+        self.global_step = 0
+        
     def __call__(self, global_step, hold_base_rate_steps=0):
         """
         Args:
@@ -46,6 +47,7 @@ class Yolact_LearningRateSchedule(tf.keras.optimizers.schedules.LearningRateSche
         ValueError: if warmup_learning_rate is larger than learning_rate_base,
           or if warmup_steps is larger than total_steps.
         """
+        self.global_step = global_step
         warmup_learning_rate = tf.convert_to_tensor(self.warmup_lr)
         dtype = warmup_learning_rate.dtype
         warmup_steps = tf.cast(self.warmup_step, dtype)
