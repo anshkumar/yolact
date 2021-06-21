@@ -96,11 +96,18 @@ class Parser(object):
         self._anchor_instance.matching(
             self._match_threshold, self._unmatched_threshold, boxes, classes)
 
+        boxes_norm = boxes
+
+        # number of object in training sample
+        num_obj = tf.size(classes)
+
         # Padding classes and mask to fix length [None, num_max_fix_padding,...]
         num_padding = self._num_max_fix_padding - tf.shape(classes)[0]
         pad_classes = tf.zeros([num_padding], dtype=tf.int64)
+        pad_boxes = tf.zeros([num_padding, 4])
         pad_masks = tf.zeros([num_padding, self._proto_output_size[0], 
             self._proto_output_size[1]])
+        boxes_norm = tf.concat([boxes_norm, pad_boxes], axis=0)
 
         if tf.shape(classes)[0] == 1:
             masks = tf.expand_dims(masks, axis=0)
@@ -113,7 +120,9 @@ class Parser(object):
             'conf_gt': conf_gt,
             'prior_max_box': prior_max_box,
             'prior_max_index': prior_max_index,
+            'boxes_norm': boxes_norm,
             'classes': classes,
+            'num_obj': num_obj,
             'mask_target': masks,
         }
         return image, labels

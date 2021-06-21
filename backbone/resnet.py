@@ -251,7 +251,7 @@ def block1(x, filters, kernel_size=3, stride=1, conv_shortcut=True,
 
   if use_dcn:
     x = dcn_v2.DCN(
-        filters, kernel_size, padding='SAME', name=name + '_2_conv')(x)
+        filters, kernel_size, padding='SAME', name=name + '_2_conv_dcn')(x)
   else:
     x = layers.Conv2D(
         filters, kernel_size, padding='SAME', name=name + '_2_conv')(x)
@@ -340,7 +340,7 @@ def block2(x, filters, kernel_size=3, stride=1, conv_shortcut=False,
         kernel_size,
         strides=stride,
         use_bias=False,
-        name=name + '_2_conv')(x)
+        name=name + '_2_conv_dcn')(x)
   else:
     x = layers.Conv2D(
         filters,

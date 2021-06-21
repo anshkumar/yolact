@@ -17,7 +17,9 @@ class Yolact(tf.keras.Model):
     """
 
     def __init__(self, img_h, img_w, fpn_channels, num_class, num_mask, 
-                 aspect_ratio, scales, use_dcn=False):
+                 aspect_ratio, scales, use_dcn=False, 
+                 base_model_trainable=False,
+                 dcn_trainable=True):
         super(Yolact, self).__init__()
         out = ['conv3_block4_out', 'conv4_block6_out', 'conv5_block3_out']
 
@@ -27,7 +29,9 @@ class Yolact(tf.keras.Model):
                 include_top=False,
                 layers=tf.keras.layers,
                 weights='imagenet')
-            base_model.trainable = False # Freeze the convolutional base
+
+            # Freeze the convolutional base
+            base_model.trainable = base_model_trainable 
         else:
             base_model = resnet.ResNet50(
                 input_shape=(img_h,img_w,3),
@@ -35,6 +39,12 @@ class Yolact(tf.keras.Model):
                 layers=tf.keras.layers,
                 weights='imagenet',
                 dcn_layers=[False, True, True, True])
+
+            # Freeze the convolutional base
+            base_model.trainable = base_model_trainable 
+            for layer in base_model.layers:
+                if layer.name.startswith('dcn'):
+                    layer.trainable =  dcn_trainable
         
         # extract certain feature maps for FPN
         self.backbone_resnet = tf.keras.Model(inputs=base_model.input,
@@ -76,7 +86,7 @@ class Yolact(tf.keras.Model):
 
         self.num_anchors = anchorobj.num_anchors
         self.priors = anchorobj.anchors
-        
+
         # shared prediction head
         # Here, len(aspect_ratio) is passed as during prior calculations, 
         # individula scale is selected for each layer.

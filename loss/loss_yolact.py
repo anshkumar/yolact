@@ -56,7 +56,8 @@ class YOLACTLoss(object):
         loc_loss = self._loss_location(pred_offset, gt_offset, conf_gt) 
         loc_loss *= self._loss_weight_box
 
-        # conf_loss = self._loss_class(pred_cls, num_classes, conf_gt)
+        # conf_loss = self._loss_class(pred_cls, num_classes, conf_gt, 
+        #     reduction=True)
         conf_loss = self._loss_class_ohem(pred_cls, num_classes, conf_gt) 
         # conf_loss = self._focal_conf_sigmoid_loss(pred_cls, num_classes, 
         #     conf_gt)
@@ -114,54 +115,19 @@ class YOLACTLoss(object):
         num_pos = tf.shape(pos_indices)[0]
         return tf.math.divide_no_nan(loss, tf.cast(num_pos, tf.float32))
 
-    def _loss_class(self, pred_cls, num_cls, conf_gt):
-        loss_conf = tf.reduce_mean(
-            tf.nn.sparse_softmax_cross_entropy_with_logits(
+    def _loss_class(self, pred_cls, num_cls, conf_gt, reduction=False):
+        loss_conf = tf.nn.sparse_softmax_cross_entropy_with_logits(
                                        labels=tf.cast(conf_gt, 
                                         dtype=tf.int32), 
-                                       logits=pred_cls))
+                                       logits=pred_cls)
+        if reduction:
+            loss_conf = tf.reduce_mean(loss_conf)
         return loss_conf
 
     def _loss_class_ohem(self, pred_cls, num_cls, conf_gt, 
         ohem_use_most_confident=False):
 
-        # num_cls includes background
-        batch_conf = tf.reshape(pred_cls, [-1, num_cls])
-
-        # Hard Negative Mining
-        # Using tf.nn.softmax or tf.math.log(tf.math.reduce_sum(
-        # tf.math.exp(batch_conf), 1)) to calculate log_sum_exp
-        # might cause NaN problem. This is a known problem 
-        # https://github.com/tensorflow/tensorflow/issues/10142
-        # To get around this using tf.math.reduce_logsumexp and 
-        # softmax_cross_entropy_with_logit
-        if ohem_use_most_confident: # i.e. max(softmax) along classes > 0 
-            # Avoid using this.
-            # This might cause NaN as tf.nn.softmax does not handle overflows 
-            # and underflows
-            batch_conf = tf.nn.softmax(batch_conf, axis=1)
-            loss_c = tf.math.reduce_max(batch_conf[:, 1:], axis=1)
-        else:
-            # This will be used to determine unaveraged confidence loss across 
-            # all examples in a batch.
-            # https://github.com/dbolya/yolact/blob/
-            # b97e82d809e5e69dc628930070a44442fd23617a/layers/modules/
-            # multibox_loss.py#L251
-
-            # https://github.com/dbolya/yolact/blob/
-            # b97e82d809e5e69dc628930070a44442fd23617a/layers/box_utils.py#L316
-
-            # Using inbuild reduce_logsumexp to avoid NaN
-            # This function is more numerically stable than 
-            # log(sum(exp(input))). It avoids overflows caused by taking the 
-            # exp of large inputs and underflows caused by taking the log of 
-            # small inputs.
-            log_sum_exp = tf.math.reduce_logsumexp(batch_conf, 1)
-            # tf.print(log_sum_exp)
-            loss_c = log_sum_exp - batch_conf[:,0]
-
-        #(batch_size, 27429)
-        loss_c = tf.reshape(loss_c, (tf.shape(pred_cls)[0], -1))  
+        loss_c = self._loss_class(pred_cls, num_cls, conf_gt) 
         pos_indices = tf.where(conf_gt > 0 )
 
         loss_c = tf.tensor_scatter_nd_update(loss_c, pos_indices, 

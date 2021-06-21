@@ -78,8 +78,11 @@ flags.DEFINE_boolean('tflite_export', False,
                     'Inference Module for TFLite-friendly models')
 flags.DEFINE_boolean('use_dcn', False,
                     'use dcnv2 for base model')
+flags.DEFINE_boolean('base_model_trainable', False,
+                    'Unfreeze the base model')
 flags.DEFINE_boolean('use_mask_iou', False,
                     'use mask_iou for loss')
+
 '''
 def _get_categories_list():
   
@@ -162,6 +165,15 @@ def main(argv):
     # -----------------------------------------------------------------
     # Creating the instance of the model specified.
     logging.info("Creating the model instance of YOLACT")
+    if (FLAGS.use_dcn and FLAGS.pretrained_checkpoints == '') or \
+      FLAGS.base_model_trainable:
+      
+      dcn_trainable = True
+      logging.info("DCN layer in the base model is trainable.")
+    else:
+      logging.info("DCN layer in the base model is NOT trainable.")
+      dcn_trainable = False
+
     model = yolact.Yolact(
       img_h=FLAGS.img_h, 
       img_w=FLAGS.img_w,
@@ -170,7 +182,9 @@ def main(argv):
       num_mask=32,
       aspect_ratio=[float(i) for i in FLAGS.aspect_ratio],
       scales=[int(i) for i in FLAGS.scale],
-      use_dcn=FLAGS.use_dcn)
+      use_dcn=FLAGS.use_dcn,
+      base_model_trainable=FLAGS.base_model_trainable,
+      dcn_trainable=dcn_trainable)
 
     if FLAGS.model_quantization:
       logging.info("Quantization aware training")
@@ -267,7 +281,8 @@ def main(argv):
         if FLAGS.pretrained_checkpoints != '':
           feature_extractor_model = tf.train.Checkpoint(
             backbone_resnet=model.backbone_resnet, 
-            backbone_fpn=model.backbone_fpn)
+            backbone_fpn=model.backbone_fpn,
+            protonet=model.protonet)
           ckpt = tf.train.Checkpoint(model=feature_extractor_model)
           ckpt.restore(FLAGS.pretrained_checkpoints).\
             expect_partial().assert_existing_objects_matched()
@@ -332,8 +347,8 @@ def main(argv):
 
         if iterations and iterations % FLAGS.print_interval == 0:
             logging.info(
-                "Iteration {}, LR: {}, Total Loss: {}, B: {},  C: {}, M: {}, \
-                I: {}, S:{} ".format(
+                ("Iteration {}, LR: {}, Total Loss: {}, B: {},  C: {}, M: {}, "
+                "I: {}, S:{} ").format(
                 iterations,
                 optimizer._decayed_lr(var_dtype=tf.float32),
                 train_loss.result(), 
@@ -446,12 +461,12 @@ def main(argv):
                 tf.summary.scalar('V Seg loss', 
                   v_seg.result(), step=iterations)
 
-            train_template = 'Iteration {}, Train Loss: {}, Loc Loss: {},  \
-              Conf Loss: {}, Mask Loss: {}, Mask IOU Loss: {}, Seg Loss: {}'
+            train_template = ("Iteration {}, Train Loss: {}, Loc Loss: {},  "
+              "Conf Loss: {}, Mask Loss: {}, Mask IOU Loss: {}, Seg Loss: {}")
 
-            valid_template = 'Iteration {}, Valid Loss: {}, V Loc Loss: {},  \
-              V Conf Loss: {}, V Mask Loss: {}, V Mask IOU Loss: {}, \
-              Seg Loss: {}'
+            valid_template = ("Iteration {}, Valid Loss: {}, V Loc Loss: {},  "
+              "V Conf Loss: {}, V Mask Loss: {}, V Mask IOU Loss: {}, "
+              "Seg Loss: {}")
 
             logging.info(train_template.format(iterations + 1,
                                         train_loss.result(),
@@ -485,7 +500,7 @@ def main(argv):
                 else:
                   save_options = tf.saved_model.SaveOptions(
                     namespace_whitelist=['Addons'])
-                  
+
                   model.save(os.path.join(
                     FLAGS.saved_models_dir, 
                     'saved_model_'+ str(valid_loss.result().numpy())), 
