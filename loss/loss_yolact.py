@@ -56,10 +56,10 @@ class YOLACTLoss(object):
         loc_loss = self._loss_location(pred_offset, gt_offset, conf_gt) 
         loc_loss *= self._loss_weight_box
 
-        # conf_loss = self._loss_class(pred_cls, num_classes, conf_gt, 
+        # conf_loss = self._loss_class(pred_cls, conf_gt, 
         #     reduction=True)
-        conf_loss = self._loss_class_ohem(pred_cls, num_classes, conf_gt) 
-        # conf_loss = self._focal_conf_sigmoid_loss(pred_cls, num_classes, 
+        conf_loss = self._loss_class_ohem(pred_cls, conf_gt) 
+        # conf_loss = self._focal_conf_sigmoid_loss(pred_cls, 
         #     conf_gt)
         conf_loss *= self._loss_weight_cls
 
@@ -115,7 +115,7 @@ class YOLACTLoss(object):
         num_pos = tf.shape(pos_indices)[0]
         return tf.math.divide_no_nan(loss, tf.cast(num_pos, tf.float32))
 
-    def _loss_class(self, pred_cls, num_cls, conf_gt, reduction=False):
+    def _loss_class(self, pred_cls, conf_gt, reduction=False):
         loss_conf = tf.nn.sparse_softmax_cross_entropy_with_logits(
                                        labels=tf.cast(conf_gt, 
                                         dtype=tf.int32), 
@@ -124,14 +124,17 @@ class YOLACTLoss(object):
             loss_conf = tf.reduce_mean(loss_conf)
         return loss_conf
 
-    def _loss_class_ohem(self, pred_cls, num_cls, conf_gt, 
-        ohem_use_most_confident=False):
+    def _loss_class_ohem(self, pred_cls, conf_gt):
 
-        loss_c = self._loss_class(pred_cls, num_cls, conf_gt) 
+        loss_c = self._loss_class(pred_cls, conf_gt) 
         pos_indices = tf.where(conf_gt > 0 )
+        neg_indices = tf.where(conf_gt == 0 )
 
-        loss_c = tf.tensor_scatter_nd_update(loss_c, pos_indices, 
-                    tf.zeros(tf.shape(pos_indices)[0])) # filter out pos boxes
+        loss_c_pos = tf.gather_nd(loss_c, pos_indices)
+        loss_c_pos = tf.reduce_sum(loss_c_pos)
+
+        loss_c_neg = tf.gather_nd(loss_c, neg_indices)
+        loss_c_neg = tf.reshape(loss_c_neg, (-1))
 
         num_pos = tf.math.count_nonzero(tf.greater(conf_gt,0), axis=1, 
             keepdims=True)
@@ -139,39 +142,17 @@ class YOLACTLoss(object):
         num_neg = tf.clip_by_value(num_pos * self._neg_pos_ratio, 
             clip_value_min=tf.constant(self._neg_pos_ratio, dtype=tf.int64), 
             clip_value_max=tf.cast(tf.shape(conf_gt)[1]-1, tf.int64))
+        num_neg = tf.reduce_sum(tf.reshape(num_neg, (-1)))
+        num_pos = tf.reduce_sum(tf.reshape(num_pos, (-1)))
 
-        # filter out neutrals (conf_gt = -1)
-        neutrals_indices = tf.where(conf_gt < 0 )
-        loss_c = tf.tensor_scatter_nd_update(loss_c, neutrals_indices, 
-            tf.zeros(tf.shape(neutrals_indices)[0])) 
+        loss_c_neg, _ = tf.math.top_k(loss_c_neg, k=tf.cast(num_neg, tf.int32))
+        loss_c_neg = tf.reduce_sum(loss_c_neg)
 
-        idx = tf.argsort(loss_c, axis=1, direction='DESCENDING')
-        idx_rank = tf.argsort(idx, axis=1)
-
-        # Just in case there aren't enough negatives, don't start using 
-        # positives as negatives
-        #
-        # Filter out neutrals and positive
-        neg_indices = tf.where(
-            (tf.cast(idx_rank, dtype=tf.int64) < num_neg) & (conf_gt == 0))
-
-        # neg_indices shape is (batch_size, no_prior)
-        # pred_cls shape is (batch_size, no_prior, no_class)
-        neg_pred_cls_for_loss = tf.gather_nd(pred_cls, neg_indices)
-        neg_gt_for_loss = tf.gather_nd(conf_gt, neg_indices)
-        pos_pred_cls_for_loss = tf.gather_nd(pred_cls, pos_indices)
-        pos_gt_for_loss = tf.gather_nd(conf_gt, pos_indices)
-
-        target_logits = tf.concat([pos_pred_cls_for_loss, 
-            neg_pred_cls_for_loss], axis=0)
-        target_labels = tf.concat([pos_gt_for_loss, neg_gt_for_loss], axis=0)
-        target_labels = tf.one_hot(tf.squeeze(target_labels), depth=num_cls)
-
-        loss_conf = tf.reduce_sum(tf.nn.softmax_cross_entropy_with_logits(
-            target_labels, target_logits))
         normalizer = tf.reduce_sum(tf.cast(num_pos, tf.float32)+tf.cast(
             num_neg, tf.float32))
-        loss_conf = tf.math.divide_no_nan(loss_conf, normalizer)
+
+        loss_conf = (loss_c_pos + loss_c_neg)/normalizer
+
         return loss_conf
 
     def _loss_mask(self, model, prior_max_index, coef_p, proto_p, mask_gt, 
