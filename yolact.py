@@ -102,7 +102,7 @@ class Yolact(tf.keras.Model):
         # post-processing for evaluation
         self.detect = Detect(num_class, max_output_size=300, 
             per_class_max_output_size=100,
-            conf_thresh=0.05, nms_thresh=0.5)
+            conf_thresh=0.15, nms_thresh=0.5)
         self.max_output_size = 300
 
     @tf.function
@@ -113,6 +113,7 @@ class Yolact(tf.keras.Model):
 
         # https://www.tensorflow.org/tutorials/images/transfer_learning#\
         # important_note_about_batchnormalization_layers
+        # update the statistics of bn
         c3, c4, c5 = self.backbone_resnet(inputs, training=False)
         fpn_out = self.backbone_fpn(c3, c4, c5)
 
@@ -167,6 +168,6 @@ class Yolact(tf.keras.Model):
                 'priors': self.priors
             }
 
-            pred.update(self.detect(pred))
+            pred.update(self.detect(pred, img_shape=tf.shape(inputs)))
 
         return pred

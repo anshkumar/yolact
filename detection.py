@@ -21,7 +21,7 @@ class Detect(object):
         self.max_output_size = 300
         self.per_class_max_output_size = 100
 
-    def __call__(self, net_outs, trad_nms=True, use_cropped_mask=True):
+    def __call__(self, net_outs, img_shape, trad_nms=True, use_cropped_mask=True):
         """
         Args:
              pred_offset: (tensor) Loc preds from loc layers
@@ -56,6 +56,7 @@ class Detect(object):
         class_p = tf.nn.softmax(class_p, axis=-1)
         # exclude the background class
         class_p = class_p[:, :, 1:]
+
         # get the max score class of 27429 predicted boxes
         class_p_max = tf.reduce_max(class_p, axis=-1)  # [1, 27429]
         batch_size = tf.shape(class_p_max)[0]
@@ -74,26 +75,35 @@ class Detect(object):
             raw_anchors = tf.boolean_mask(anchors, class_p_max[b] > self.conf_thresh)
 
             # decode only selected boxes
-            box_thre = self._decode(raw_boxes, raw_anchors)  # [27429, 4]
+            boxes = self._decode(raw_boxes, raw_anchors)  # [27429, 4]
 
             if tf.size(class_thre) != 0:
                 if not trad_nms:
-                    box_thre, coef_thre, class_ids, class_thre = _fast_nms(box_thre, coef_thre, class_thre)
+                    boxes, coef_thre, class_ids, class_thre = _fast_nms(boxes, coef_thre, class_thre)
                 else:
-                    box_thre, coef_thre, class_ids, class_thre = self._traditional_nms(box_thre, coef_thre, class_thre, score_threshold=self.conf_thresh, iou_threshold=self.nms_thresh, max_class_output_size=self.per_class_max_output_size)
+                    boxes, coef_thre, class_ids, class_thre = self._traditional_nms(boxes, coef_thre, class_thre, score_threshold=self.conf_thresh, iou_threshold=self.nms_thresh, max_class_output_size=self.per_class_max_output_size)
 
-                num_detection = [tf.shape(box_thre)[0]]
+                num_detection = [tf.shape(boxes)[0]]
 
-                _masks_coef = tf.matmul(proto_p[b], tf.transpose(coef_thre))
-                _masks_coef = tf.sigmoid(_masks_coef) # [138, 138, NUM_BOX]
+                masks = tf.matmul(proto_p[b], tf.transpose(coef_thre))
+                masks = tf.sigmoid(masks) # [138, 138, NUM_BOX]
 
-                boxes, masks = self._sanitize(_masks_coef, box_thre)
+                boxes = self._sanitize(boxes, width=img_shape[2], height=img_shape[1])
+                boxes = tf.stack([
+                    boxes[:, 0]/tf.cast(img_shape[1], tf.float32), 
+                    boxes[:, 1]/tf.cast(img_shape[2], tf.float32),
+                    boxes[:, 2]/tf.cast(img_shape[1], tf.float32),
+                    boxes[:, 3]/tf.cast(img_shape[2], tf.float32)
+                    ], axis=-1)
+
                 if use_cropped_mask:
                     masks = utils.crop(masks, boxes)
 
+                masks = tf.clip_by_value(masks, clip_value_min=0.0, 
+                    clip_value_max=1.0)
                 masks = tf.transpose(masks, (2,0,1))
 
-                _ind_boxes = tf.stack((tf.tile([b], num_detection), tf.range(0, tf.shape(box_thre)[0])), axis=-1) # Shape: (Number of updates, index of update)
+                _ind_boxes = tf.stack((tf.tile([b], num_detection), tf.range(0, tf.shape(boxes)[0])), axis=-1) # Shape: (Number of updates, index of update)
                 detection_boxes = tf.tensor_scatter_nd_update(detection_boxes, _ind_boxes, boxes)
                 detection_classes = tf.tensor_scatter_nd_update(detection_classes, _ind_boxes, class_ids)
                 detection_scores = tf.tensor_scatter_nd_update(detection_scores, _ind_boxes, class_thre)
@@ -171,7 +181,7 @@ class Detect(object):
         # [y_min, x_min, y_max, x_max]
         return tf.stack([boxes[:, 1], boxes[:, 0],boxes[:, 3], boxes[:, 2]], axis=-1)
 
-    def _sanitize_coordinates(self, _x1, _x2, padding: int = 0):
+    def _sanitize_coordinates(self, _x1, _x2, size, padding: int = 0):
         """
         Sanitizes the input coordinates so that x1 < x2, x1 != x2, x1 >= 0, and x2 <= image_size.
         Also converts from relative to absolute coordinates and casts the results to long tensors.
@@ -179,32 +189,25 @@ class Detect(object):
         """
         x1 = tf.math.minimum(_x1, _x2)
         x2 = tf.math.maximum(_x1, _x2)
-        x1 = tf.clip_by_value(x1 - padding, clip_value_min=0.0, clip_value_max=tf.cast(1.0,tf.float32))
-        x2 = tf.clip_by_value(x2 + padding, clip_value_min=0.0, clip_value_max=tf.cast(1.0,tf.float32))
+        x1 = tf.clip_by_value(x1 - padding, clip_value_min=0.0, clip_value_max=tf.cast(size,tf.float32))
+        x2 = tf.clip_by_value(x2 + padding, clip_value_min=0.0, clip_value_max=tf.cast(size,tf.float32))
 
         # Normalize the coordinates
         return x1, x2
 
-    def _sanitize(self, masks, boxes, padding: int = 0, crop_size=(30,30)):
+    def _sanitize(self, boxes, width, height,  padding: int = 0, crop_size=(30,30)):
         """
         "Crop" predicted masks by zeroing out everything not in the predicted bbox.
         Args:
             - masks should be a size [h, w, n] tensor of masks
             - boxes should be a size [n, 4] tensor of bbox coords in relative point form
-        """
-        # h, w, n = masks.shape
-        
-        x1, x2 = self._sanitize_coordinates(boxes[:, 1], boxes[:, 3], padding)
-        y1, y2 = self._sanitize_coordinates(boxes[:, 0], boxes[:, 2], padding)
+        """        
+        x1, x2 = self._sanitize_coordinates(boxes[:, 1], boxes[:, 3], width, padding)
+        y1, y2 = self._sanitize_coordinates(boxes[:, 0], boxes[:, 2], height, padding)
 
-        # Making adjustments for tf.image.crop_and_resize
         boxes = tf.stack((y1, x1, y2, x2), axis=1)
 
-        # box_indices = tf.zeros(tf.shape(boxes)[0], dtype=tf.int32) # All the boxes belong to a single batch
-        # masks = tf.expand_dims(tf.transpose(masks, (2,0,1)), axis=-1)
-        # masks = tf.image.crop_and_resize(masks, boxes, box_indices, crop_size)
-
-        return boxes, masks
+        return boxes
 
     def _traditional_nms(self, boxes, mask_coef, scores, iou_threshold=0.5, score_threshold=0.15, max_class_output_size=100, max_output_size=300, soft_nms_sigma=0.5):
         num_classes = tf.shape(scores)[1]

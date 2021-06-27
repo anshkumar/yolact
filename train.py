@@ -42,6 +42,8 @@ flags.DEFINE_string('saved_models_dir', './saved_models',
                     'directory for exporting saved_models')
 flags.DEFINE_string('label_map', './label_map.pbtxt',
                     'path to label_map.pbtxt')
+flags.DEFINE_string('optimizer', 'SGD',
+                    'Optimizer to use')
 flags.DEFINE_integer('train_iter', 1200000,
                      'iteraitons')
 flags.DEFINE_integer('batch_size', 1,
@@ -226,19 +228,24 @@ def main(argv):
     #   initial_lr=FLAGS.lr, 
     #   total_steps=FLAGS.lr_total_steps)
     lr_schedule = tf.optimizers.schedules.PiecewiseConstantDecay(
-      [280000, 360000, 400000], 
+      [int(0.8*FLAGS.train_iter), int(0.9*FLAGS.train_iter), int(0.95*FLAGS.train_iter)], 
       [FLAGS.lr, 0.1*FLAGS.lr, 0.01*FLAGS.lr, 0.001*FLAGS.lr])
 
     logging.info("Initiate the Optimizer and Loss function...")
-    optimizer = tfa.optimizers.SGDW(
-      learning_rate=lr_schedule, 
-      momentum=FLAGS.momentum, 
-      weight_decay=FLAGS.weight_decay)
-    # wd = lambda: FLAGS.weight_decay * lr_schedule(lr_schedule.global_step)
-    # optimizer = tfa.optimizers.AdamW(
-    #   learning_rate=lr_schedule, 
-    #   weight_decay=FLAGS.weight_decay)
-    criterion = loss_yolact.YOLACTLoss(use_mask_iou=FLAGS.use_mask_iou)
+    if FLAGS.optimizer == 'SGD':
+      logging.info("Using SGDW optimizer")
+      optimizer = tfa.optimizers.SGDW(
+        learning_rate=lr_schedule, 
+        momentum=FLAGS.momentum, 
+        weight_decay=FLAGS.weight_decay)
+    else:
+      # wd = lambda: FLAGS.weight_decay * lr_schedule(lr_schedule.global_step)
+      logging.info("Using Adam optimizer")
+      optimizer = tfa.optimizers.AdamW(
+        learning_rate=lr_schedule, 
+        weight_decay=FLAGS.weight_decay)
+    criterion = loss_yolact.YOLACTLoss(img_h= FLAGS.img_h, img_w=FLAGS.img_w,
+                                        use_mask_iou=FLAGS.use_mask_iou)
     train_loss = tf.keras.metrics.Mean('train_loss', dtype=tf.float32)
     valid_loss = tf.keras.metrics.Mean('valid_loss', dtype=tf.float32)
     loc = tf.keras.metrics.Mean('loc_loss', dtype=tf.float32)
@@ -410,7 +417,7 @@ def main(argv):
 
                     det_num = output['num_detections'][0].numpy()
                     det_boxes = output['detection_boxes'][0][:det_num]
-                    det_boxes = det_boxes.numpy()*np.array([_h,_w,_h,_w])
+                    det_boxes = det_boxes.numpy() #*np.array([_h,_w,_h,_w])
                     det_masks = output['detection_masks'][0][:det_num].numpy()
                     det_masks = (det_masks > 0.5)
 
@@ -422,7 +429,7 @@ def main(argv):
                         _mask = det_masks[_b].astype("uint8")
                         _mask = cv2.resize(_mask, (_w, _h))
                         det_masked_image[_b] = _mask
-                    
+
                     coco_evaluator.add_single_detected_image_info(
                         image_id='image'+str(valid_iter),
                         detections_dict={

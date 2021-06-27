@@ -26,17 +26,17 @@ class Anchor(object):
         prior_boxes = []
         num_anchors = 0
         for idx, f_size in enumerate(feature_map_size):
-            print("Create priors for f_size: ", f_size, " aspect_ratio: ",aspect_ratio, " scale: ", scale)
+            print("Create priors for f_size: ", f_size, " aspect_ratio: ",aspect_ratio, " scale: ", scale[idx])
             count_anchor = 0
             for j, i in product(range(int(f_size[0])), range(int(f_size[1]))):
                 # i,j are pixels values in feature map
                 # + 0.5 because priors are in center
-                x = (i + 0.5) / f_size[1] # normalize the pixel values
-                y = (j + 0.5) / f_size[0]
+                x = (i + 0.5) #/ f_size[1] # normalize the pixel values
+                y = (j + 0.5) #/ f_size[0]
                 for ars in aspect_ratio:
                     a = sqrt(ars)
-                    w = scale[idx] * a / img_size_w # normalize the width value
-                    h = scale[idx] / a / img_size_h
+                    w = scale[idx] * a #/ img_size_w # normalize the width value
+                    h = scale[idx] / a #/ img_size_h
                     # directly use point form here => [cx, cy, w, h]
                     prior_boxes += [x, y, w, h]
                 count_anchor += 1
@@ -69,6 +69,8 @@ class Anchor(object):
         else:
             g_hat_w = tf.math.log(center_gt[:, 2] / center_anchors[:, 2])
             g_hat_h = tf.math.log(center_gt[:, 3] / center_anchors[:, 3])
+        tf.debugging.assert_all_finite(g_hat_w, "Ground truth box width encoding NaN/Inf")
+        tf.debugging.assert_all_finite(g_hat_h, "Ground truth box width encoding NaN/Inf")
         offsets = tf.stack([g_hat_cx, g_hat_cy, g_hat_w, g_hat_h], axis=-1)
         return offsets
 

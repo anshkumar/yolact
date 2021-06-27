@@ -71,14 +71,15 @@ def map_to_offset(x):
     g_hat_h = tf.math.log(x[3, 0] / x[3, 1])
     return tf.stack([g_hat_cx, g_hat_cy, g_hat_w, g_hat_h])
 
-def sanitize_coordinates(_x1, _x2, img_size, padding = 0):
+def sanitize_coordinates(_x1, _x2, img_size, normalized, padding = 0):
     """
     Sanitizes the input coordinates so that x1 < x2, x1 != x2, x1 >= 0, and x2 <= image_size.
     Also converts from relative to absolute coordinates and casts the results to long tensors.
     Warning: this does things in-place behind the scenes so copy if necessary.
     """
-    _x1 = _x1 * img_size
-    _x2 = _x2 * img_size
+    if normalized:
+        _x1 = _x1 * img_size
+        _x2 = _x2 * img_size
 
     x1 = tf.math.minimum(_x1, _x2)
     x2 = tf.math.maximum(_x1, _x2)
@@ -89,7 +90,7 @@ def sanitize_coordinates(_x1, _x2, img_size, padding = 0):
 
 
 # crop the prediction of mask so as to calculate the linear combination mask loss
-def crop(mask_p, boxes, padding = 1):
+def crop(mask_p, boxes, padding = 1, normalized=True):
     """
     "Crop" predicted masks by zeroing out everything not in the predicted bbox.
     Args:
@@ -97,8 +98,8 @@ def crop(mask_p, boxes, padding = 1):
         - boxes should be a size [n, 4] tensor of bbox coords in relative point form
     """
 
-    x1, x2 = sanitize_coordinates(boxes[:, 1], boxes[:, 3], tf.cast(tf.shape(mask_p)[1], tf.float32), padding)
-    y1, y2 = sanitize_coordinates(boxes[:, 0], boxes[:, 2], tf.cast(tf.shape(mask_p)[0], tf.float32), padding)
+    x1, x2 = sanitize_coordinates(boxes[:, 1], boxes[:, 3], tf.cast(tf.shape(mask_p)[1], tf.float32), padding, normalized)
+    y1, y2 = sanitize_coordinates(boxes[:, 0], boxes[:, 2], tf.cast(tf.shape(mask_p)[0], tf.float32), padding, normalized)
 
     rows = tf.reshape(tf.range(tf.shape(mask_p)[0], dtype=x1.dtype), (-1, 1, 1))
     cols = tf.reshape(tf.range(tf.shape(mask_p)[1], dtype=x1.dtype), (1, -1, 1))

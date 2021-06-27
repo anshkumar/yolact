@@ -90,13 +90,16 @@ class Parser(object):
         masks = tf.squeeze(masks)
         masks = tf.cast(masks + 0.5, tf.uint8)
         masks = tf.cast(masks, tf.float32)
+
+        # remember to unnormalized the bbox
+        # [ymin, xmin, ymax, xmax ]
+        boxes_norm = boxes
+        boxes = boxes * [self._output_size_h, self._output_size_w, self._output_size_h , self._output_size_w]
         
         # matching anchors
         all_offsets, conf_gt, prior_max_box, prior_max_index = \
         self._anchor_instance.matching(
             self._match_threshold, self._unmatched_threshold, boxes, classes)
-
-        boxes_norm = boxes
 
         # number of object in training sample
         num_obj = tf.size(classes)
