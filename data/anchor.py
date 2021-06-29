@@ -16,8 +16,9 @@ class Anchor(object):
         """
         self.img_size_h = img_size_h
         self.img_size_w = img_size_w
-        self.num_anchors, self.anchors = self._generate_anchors(
+        self.num_anchors, self.anchors_norm = self._generate_anchors(
             feature_map_size, aspect_ratio, scale)
+        self.anchors = self.get_anchors()
 
     def _generate_anchors(self, feature_map_size, aspect_ratio, scale):
         """
@@ -52,15 +53,22 @@ class Anchor(object):
         output = tf.cast(output, tf.float32)
         return num_anchors, output
 
-    def _encode(self, map_loc, center_anchors, include_variances=False):
+    def _encode(self, map_loc, anchors, include_variances=False):
         # center_gt = tf.map_fn(lambda x: map_to_center_form(x), map_loc)
-        # center_anchors in [cx, cy, w, h]
+        # center_anchors in [ymin, xmin, ymax, xmax ]
         # map_loc in [ymin, xmin, ymax, xmax ]
-        h = map_loc[:, 2] - map_loc[:, 0]
-        w = map_loc[:, 3] - map_loc[:, 1]
+        gh = map_loc[:, 2] - map_loc[:, 0]
+        gw = map_loc[:, 3] - map_loc[:, 1]
         center_gt = tf.cast(tf.stack(
-            [map_loc[:, 1] + (w / 2), 
-            map_loc[:, 0] + (h / 2), w, h], 
+            [map_loc[:, 1] + (gw / 2), 
+            map_loc[:, 0] + (gh / 2), gw, gh], 
+            axis=-1), tf.float32)
+
+        ph = anchors[:, 2] - anchors[:, 0]
+        pw = anchors[:, 3] - anchors[:, 1]
+        center_anchors = tf.cast(tf.stack(
+            [anchors[:, 1] + (pw / 2), 
+            anchors[:, 0] + (ph / 2), pw, ph], 
             axis=-1), tf.float32)
         variances = [0.1, 0.2]
 
@@ -160,30 +168,30 @@ class Anchor(object):
     def get_anchors(self):
         # Convert anchors from [cx, cy, w, h] to [ymin, xmin, ymax, xmax ] 
         # for IOU calculations
-        w = self.anchors[:, 2]
-        h = self.anchors[:, 3]
-        anchors = tf.cast(tf.stack(
-            [(self.anchors[:, 1] - (h / 2))*self.img_size_h, 
-            (self.anchors[:, 0] - (w / 2))*self.img_size_w, 
-            (self.anchors[:, 1] + (h / 2))*self.img_size_h, 
-            (self.anchors[:, 0] + (w / 2))*self.img_size_w], 
+        w = self.anchors_norm[:, 2]
+        h = self.anchors_norm[:, 3]
+        anchors_yxyx = tf.cast(tf.stack(
+            [(self.anchors_norm[:, 1] - (h / 2))*self.img_size_h, 
+            (self.anchors_norm[:, 0] - (w / 2))*self.img_size_w, 
+            (self.anchors_norm[:, 1] + (h / 2))*self.img_size_h, 
+            (self.anchors_norm[:, 0] + (w / 2))*self.img_size_w], 
             axis=-1), tf.float32)
 
-        return anchors
+        return anchors_yxyx
 
     def matching(self, pos_thresh, neg_thresh, gt_bbox, gt_labels):
-        _anchors = self.get_anchors()
-
         # size: [num_objects, num_priors]; anchors along the row and 
         # ground_truth clong the columns
-        pairwise_iou = self._iou(_anchors, gt_bbox) 
+
+        # anchors and gt_bbox in [y1, x1, y2, x2]
+        pairwise_iou = self._iou(self.anchors, gt_bbox) 
 
         # size [num_priors]; iou with ground truth with the anchors
         each_prior_max = tf.reduce_max(pairwise_iou, axis=-1) 
 
         if tf.shape(pairwise_iou)[-1] == 0: # No positive ground-truth boxes
-            return (_anchors*0, tf.cast(_anchors[:, 0]*0, dtype=tf.int64), 
-                _anchors*0, tf.cast(_anchors[:, 0]*0, dtype=tf.int64))
+            return (self.anchors*0, tf.cast(self.anchors[:, 0]*0, dtype=tf.int64), 
+                self.anchors*0, tf.cast(self.anchors[:, 0]*0, dtype=tf.int64))
 
         # size [num_priors]; id of groud truth having max iou with the anchors
         each_prior_index = tf.math.argmax(pairwise_iou, axis=-1) 
@@ -210,7 +218,7 @@ class Anchor(object):
         each_prior_index = tf.tensor_scatter_nd_update(each_prior_index, 
             indices, updates)
 
-        # size: [num_priors, 4]
+        # size: [num_priors, 4]; each_prior_box in [y1, x1, y2, x2]
         each_prior_box = tf.gather(gt_bbox, each_prior_index) 
 
         # the class of the max IoU gt box for each prior, size: [num_priors]
@@ -226,7 +234,7 @@ class Anchor(object):
             background_label_index, 
             tf.zeros(tf.size(background_label_index), dtype=tf.int64))
 
-        # anchors in [cx, cy, w, h]
-        offsets = self._encode(each_prior_box, _anchors)
+        # anchors and each_prior_box in [y1, x1, y2, x2]
+        offsets = self._encode(each_prior_box, self.anchors)
 
         return offsets, conf, each_prior_box, each_prior_index

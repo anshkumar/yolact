@@ -44,7 +44,7 @@ class Detect(object):
         box_p = net_outs['pred_offset']  # [1, 27429, 4]
         class_p = net_outs['pred_cls']  # [1, 27429, 2]
         coef_p = net_outs['pred_mask_coef']  # [1, 27429, 32]
-        anchors = net_outs['priors']  # [27429, 4]
+        anchors = net_outs['priors']  # [27429, 4] [cx, cy, w, h] format. Unnormalized.
         proto_p = net_outs['proto_out']  # [1, 90, 302, 32]
         
         proto_h = tf.shape(proto_p)[1]
@@ -166,6 +166,14 @@ class Detect(object):
         variances = [0.1, 0.2]
         box_p = tf.cast(box_p, tf.float32)
         priors = tf.cast(priors, tf.float32)
+
+        ph = priors[:, 2] - priors[:, 0]
+        pw = priors[:, 3] - priors[:, 1]
+        priors = tf.cast(tf.stack(
+            [priors[:, 1] + (pw / 2), 
+            priors[:, 0] + (ph / 2), pw, ph], 
+            axis=-1), tf.float32)
+
         if include_variances:
             b_x_y = priors[:, :2] + box_p[:, :2] * priors[:, 2:]* variances[0]
             b_w_h = priors[:, 2:] * tf.math.exp(box_p[:, 2:]* variances[1])

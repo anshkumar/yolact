@@ -85,7 +85,7 @@ class Yolact(tf.keras.Model):
                               scale=scales)
 
         self.num_anchors = anchorobj.num_anchors
-        self.priors = anchorobj.get_anchors()
+        self.priors = anchorobj.anchors
 
         # shared prediction head
         # Here, len(aspect_ratio) is passed as during prior calculations, 
@@ -102,7 +102,7 @@ class Yolact(tf.keras.Model):
         # post-processing for evaluation
         self.detect = Detect(num_class, max_output_size=300, 
             per_class_max_output_size=100,
-            conf_thresh=0.15, nms_thresh=0.5)
+            conf_thresh=0.1, nms_thresh=0.5)
         self.max_output_size = 300
 
     @tf.function
