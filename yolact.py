@@ -85,7 +85,7 @@ class Yolact(tf.keras.Model):
                               scale=scales)
 
         self.num_anchors = anchorobj.num_anchors
-        self.priors = anchorobj.anchors
+        self.priors = anchorobj.get_anchors()
 
         # shared prediction head
         # Here, len(aspect_ratio) is passed as during prior calculations, 

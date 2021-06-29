@@ -60,7 +60,7 @@ class YOLACTLoss(object):
 
         loc_loss = self._loss_location(pred_offset, gt_offset, conf_gt) 
 
-        conf_loss = self._loss_class_ohem(pred_cls, conf_gt) 
+        conf_loss = self._loss_class_ohem(pred_cls, conf_gt, num_classes) 
 
         mask_loss, mask_iou_loss = self._loss_mask(model, prior_max_index, 
             pred_mask_coef, proto_out, masks, prior_max_box, conf_gt, classes) 
@@ -123,38 +123,39 @@ class YOLACTLoss(object):
 
         return loss_conf
 
-    def _loss_class_ohem(self, pred_cls, conf_gt):
+    def _loss_class_ohem(self, pred_cls, conf_gt, num_cls):
         loss_c = self._loss_class(pred_cls, conf_gt) 
+
         pos_indices = tf.where(conf_gt > 0 )
-        neg_indices = tf.where(conf_gt == 0 )
+        loss_c = tf.tensor_scatter_nd_update(loss_c, pos_indices, tf.zeros(tf.shape(pos_indices)[0])) # filter out pos boxes
+        num_pos = tf.math.count_nonzero(tf.greater(conf_gt,0), axis=1, keepdims=True)
+        num_neg = tf.clip_by_value(num_pos * self._neg_pos_ratio, clip_value_min=tf.constant(self._neg_pos_ratio, dtype=tf.int64), clip_value_max=tf.cast(tf.shape(conf_gt)[1]-1, tf.int64))
 
-        loss_c_pos = tf.gather_nd(loss_c, pos_indices)
-        loss_c_pos = tf.reduce_sum(loss_c_pos)
-        tf.debugging.assert_all_finite(loss_c_pos, "Loss Class NaN/Inf")
+        neutrals_indices = tf.where(conf_gt < 0 )
+        loss_c = tf.tensor_scatter_nd_update(loss_c, neutrals_indices, tf.zeros(tf.shape(neutrals_indices)[0])) # filter out neutrals (conf_gt = -1)
 
-        loss_c_neg = tf.gather_nd(loss_c, neg_indices)
-        loss_c_neg = tf.reshape(loss_c_neg, (-1))
-        tf.debugging.assert_all_finite(loss_c_neg, "Loss Class NaN/Inf")
+        idx = tf.argsort(loss_c, axis=1, direction='DESCENDING')
+        idx_rank = tf.argsort(idx, axis=1)
 
-        num_pos = tf.math.count_nonzero(tf.greater(conf_gt,0), axis=1, 
-            keepdims=True)
+        # Just in case there aren't enough negatives, don't start using positives as negatives
+        # Filter out neutrals and positive
+        neg_indices = tf.where((tf.cast(idx_rank, dtype=tf.int64) < num_neg) & (conf_gt == 0))
 
-        num_pos = tf.reduce_sum(num_pos)
-        num_pos = tf.cast(num_pos, tf.int32)
-        num_neg = tf.cast(num_pos*self._neg_pos_ratio, tf.int32)
-        if num_neg > tf.shape(neg_indices)[0]:
-            num_neg = tf.shape(neg_indices)[0]
+        # neg_indices shape is (batch_size, no_prior)
+        # pred_cls shape is (batch_size, no_prior, no_class)
+        neg_pred_cls_for_loss = tf.gather_nd(pred_cls, neg_indices)
+        neg_gt_for_loss = tf.gather_nd(conf_gt, neg_indices)
+        pos_pred_cls_for_loss = tf.gather_nd(pred_cls, pos_indices)
+        pos_gt_for_loss = tf.gather_nd(conf_gt, pos_indices)
 
-        loss_c_neg, _ = tf.math.top_k(loss_c_neg, k=num_neg)
-        loss_c_neg = tf.reduce_sum(loss_c_neg)
+        target_logits = tf.concat([pos_pred_cls_for_loss, neg_pred_cls_for_loss], axis=0)
+        target_labels = tf.concat([pos_gt_for_loss, neg_gt_for_loss], axis=0)
+        target_labels = tf.one_hot(tf.squeeze(target_labels), depth=num_cls)
 
-        normalizer = tf.cast(num_pos+num_neg, tf.float32)
-
-        if num_pos > 0:
-            loss_conf = (loss_c_pos + loss_c_neg)/normalizer
+        if tf.reduce_sum(tf.cast(num_pos, tf.float32)) > 0.0:
+            loss_conf = tf.reduce_sum(tf.nn.softmax_cross_entropy_with_logits(target_labels, target_logits)) / tf.reduce_sum(tf.cast(num_pos, tf.float32))
         else:
-            loss_conf = loss_c_neg/tf.cast(num_neg, tf.float32)
-
+            loss_conf = tf.reduce_sum(tf.nn.softmax_cross_entropy_with_logits(target_labels, target_logits))
         return loss_conf
 
     def _loss_mask(self, model, prior_max_index, coef_p, proto_p, mask_gt, 
@@ -292,7 +293,7 @@ class YOLACTLoss(object):
                 maskiou_t_list.append(maskiou_t)
                 class_t_list.append(pos_class_gt)
 
-        loss_m /= tf.cast(total_pos, tf.float32) 
+        loss_m = tf.math.divide_no_nan(loss_m, tf.cast(total_pos, tf.float32))
 
         if len(maskiou_t_list) == 0:
             return loss_m , loss_iou

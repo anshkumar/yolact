@@ -6,16 +6,20 @@ import tensorflow as tf
 # Can generate one instance only when creating the model
 class Anchor(object):
 
-    def __init__(self, img_size_h, img_size_w, feature_map_size, aspect_ratio, scale):
+    def __init__(self, img_size_h, img_size_w, feature_map_size, aspect_ratio, 
+        scale):
         """
         :param img_size:
         :param feature_map_size:
         :param aspect_ratio:
         :param scale:
         """
-        self.num_anchors, self.anchors = self._generate_anchors(img_size_h, img_size_w, feature_map_size, aspect_ratio, scale)
+        self.img_size_h = img_size_h
+        self.img_size_w = img_size_w
+        self.num_anchors, self.anchors = self._generate_anchors(
+            feature_map_size, aspect_ratio, scale)
 
-    def _generate_anchors(self, img_size_h, img_size_w, feature_map_size, aspect_ratio, scale):
+    def _generate_anchors(self, feature_map_size, aspect_ratio, scale):
         """
         :param img_size:
         :param feature_map_size:
@@ -26,21 +30,24 @@ class Anchor(object):
         prior_boxes = []
         num_anchors = 0
         for idx, f_size in enumerate(feature_map_size):
-            print("Create priors for f_size: ", f_size, " aspect_ratio: ",aspect_ratio, " scale: ", scale[idx])
             count_anchor = 0
             for j, i in product(range(int(f_size[0])), range(int(f_size[1]))):
                 # i,j are pixels values in feature map
                 # + 0.5 because priors are in center
-                x = (i + 0.5) #/ f_size[1] # normalize the pixel values
-                y = (j + 0.5) #/ f_size[0]
+                x = (i + 0.5) / f_size[1] # normalize the pixel values
+                y = (j + 0.5) / f_size[0]
                 for ars in aspect_ratio:
                     a = sqrt(ars)
-                    w = scale[idx] * a #/ img_size_w # normalize the width value
-                    h = scale[idx] / a #/ img_size_h
+                    w = scale[idx] * a / f_size[1] # normalize the width value
+                    h = scale[idx] / a / f_size[0]
                     # directly use point form here => [cx, cy, w, h]
                     prior_boxes += [x, y, w, h]
-                count_anchor += 1
+                    count_anchor += 1
             num_anchors += count_anchor
+            print("Create priors for f_size: ", f_size, 
+                " aspect_ratio: ",aspect_ratio, 
+                " scale: ", scale[idx],
+                " anchors count: ", count_anchor)
         output = tf.reshape(tf.convert_to_tensor(prior_boxes), [-1, 4])
         output = tf.cast(output, tf.float32)
         return num_anchors, output
@@ -51,31 +58,45 @@ class Anchor(object):
         # map_loc in [ymin, xmin, ymax, xmax ]
         h = map_loc[:, 2] - map_loc[:, 0]
         w = map_loc[:, 3] - map_loc[:, 1]
-        center_gt = tf.cast(tf.stack([map_loc[:, 1] + (w / 2), map_loc[:, 0] + (h / 2), w, h], axis=-1), tf.float32)
+        center_gt = tf.cast(tf.stack(
+            [map_loc[:, 1] + (w / 2), 
+            map_loc[:, 0] + (h / 2), w, h], 
+            axis=-1), tf.float32)
         variances = [0.1, 0.2]
 
         # calculate offset
         if include_variances:
-            g_hat_cx = (center_gt[:, 0] - center_anchors[:, 0]) / center_anchors[:, 2] / variances[0]
-            g_hat_cy = (center_gt[:, 1] - center_anchors[:, 1]) / center_anchors[:, 3] / variances[0]
+            g_hat_cx = (center_gt[:, 0] - center_anchors[:, 0]
+                ) / center_anchors[:, 2] / variances[0]
+            g_hat_cy = (center_gt[:, 1] - center_anchors[:, 1]
+                ) / center_anchors[:, 3] / variances[0]
         else:
-            g_hat_cx = (center_gt[:, 0] - center_anchors[:, 0]) / center_anchors[:, 2]
-            g_hat_cy = (center_gt[:, 1] - center_anchors[:, 1]) / center_anchors[:, 3]
+            g_hat_cx = (center_gt[:, 0] - center_anchors[:, 0]
+                ) / center_anchors[:, 2]
+            g_hat_cy = (center_gt[:, 1] - center_anchors[:, 1]
+                ) / center_anchors[:, 3]
         tf.debugging.assert_non_negative(center_anchors[:, 2] / center_gt[:, 2])
         tf.debugging.assert_non_negative(center_anchors[:, 3] / center_gt[:, 3])
         if include_variances:
-            g_hat_w = tf.math.log(center_gt[:, 2] / center_anchors[:, 2]) / variances[1]
-            g_hat_h = tf.math.log(center_gt[:, 3] / center_anchors[:, 3]) / variances[1]
+            g_hat_w = tf.math.log(center_gt[:, 2] / center_anchors[:, 2]
+                ) / variances[1]
+            g_hat_h = tf.math.log(center_gt[:, 3] / center_anchors[:, 3]
+                ) / variances[1]
         else:
             g_hat_w = tf.math.log(center_gt[:, 2] / center_anchors[:, 2])
             g_hat_h = tf.math.log(center_gt[:, 3] / center_anchors[:, 3])
-        tf.debugging.assert_all_finite(g_hat_w, "Ground truth box width encoding NaN/Inf")
-        tf.debugging.assert_all_finite(g_hat_h, "Ground truth box width encoding NaN/Inf")
+        tf.debugging.assert_all_finite(g_hat_w, 
+            "Ground truth box width encoding NaN/Inf")
+        tf.debugging.assert_all_finite(g_hat_h, 
+            "Ground truth box width encoding NaN/Inf")
         offsets = tf.stack([g_hat_cx, g_hat_cy, g_hat_w, g_hat_h], axis=-1)
         return offsets
 
     def _area(self, boxlist, scope=None):
-        # https://github.com/tensorflow/models/blob/831281cedfc8a4a0ad7c0c37173963fafb99da37/official/vision/detection/utils/object_detection/box_list_ops.py#L48
+        # https://github.com/tensorflow/models/blob/831281cedfc8a4a0ad7c0c37173
+        # 963fafb99da37/official/vision/detection/utils/object_detection/
+        # box_list_ops.py#L48
+
         """Computes area of boxes.
         Args:
         boxlist: BoxList holding N boxes
@@ -88,7 +109,10 @@ class Anchor(object):
         return tf.squeeze((y_max - y_min) * (x_max - x_min), [1])
 
     def _intersection(self, boxlist1, boxlist2, scope=None):
-        # https://github.com/tensorflow/models/blob/831281cedfc8a4a0ad7c0c37173963fafb99da37/official/vision/detection/utils/object_detection/box_list_ops.py#L209
+        # https://github.com/tensorflow/models/blob/831281cedfc8a4a0ad7c0c37173
+        # 963fafb99da37/official/vision/detection/utils/object_detection/
+        # box_list_ops.py#L209
+
         """Compute pairwise intersection areas between boxes.
         Args:
         boxlist1: BoxList holding N boxes
@@ -103,14 +127,19 @@ class Anchor(object):
             value=boxlist2, num_or_size_splits=4, axis=1)
         all_pairs_min_ymax = tf.minimum(y_max1, tf.transpose(y_max2))
         all_pairs_max_ymin = tf.maximum(y_min1, tf.transpose(y_min2))
-        intersect_heights = tf.maximum(0.0, all_pairs_min_ymax - all_pairs_max_ymin)
+        intersect_heights = tf.maximum(0.0, 
+            all_pairs_min_ymax - all_pairs_max_ymin)
         all_pairs_min_xmax = tf.minimum(x_max1, tf.transpose(x_max2))
         all_pairs_max_xmin = tf.maximum(x_min1, tf.transpose(x_min2))
-        intersect_widths = tf.maximum(0.0, all_pairs_min_xmax - all_pairs_max_xmin)
+        intersect_widths = tf.maximum(0.0, 
+            all_pairs_min_xmax - all_pairs_max_xmin)
         return intersect_heights * intersect_widths
 
     def _iou(self, boxlist1, boxlist2, scope=None):
-        # https://github.com/tensorflow/models/blob/831281cedfc8a4a0ad7c0c37173963fafb99da37/official/vision/detection/utils/object_detection/box_list_ops.py#L259
+        # https://github.com/tensorflow/models/blob/831281cedfc8a4a0ad7c0c37173
+        # 963fafb99da37/official/vision/detection/utils/object_detection/
+        # box_list_ops.py#L259
+
         """Computes pairwise intersection-over-union between box collections.
         Args:
         boxlist1: BoxList holding N boxes
@@ -122,56 +151,82 @@ class Anchor(object):
         intersections = self._intersection(boxlist1, boxlist2)
         areas1 = self._area(boxlist1)
         areas2 = self._area(boxlist2)
-        unions = (
-            tf.expand_dims(areas1, 1) + tf.expand_dims(areas2, 0) - intersections)
+        unions = (tf.expand_dims(areas1, 1) + tf.expand_dims(
+            areas2, 0) - intersections)
         return tf.where(
             tf.equal(intersections, 0.0),
             tf.zeros_like(intersections), tf.truediv(intersections, unions))
 
     def get_anchors(self):
-        return self.anchors
-
-    def matching(self, pos_thresh, neg_thresh, gt_bbox, gt_labels):
-        # Convert anchors from [cx, cy, w, h] to [ymin, xmin, ymax, xmax ] for IOU calculations
+        # Convert anchors from [cx, cy, w, h] to [ymin, xmin, ymax, xmax ] 
+        # for IOU calculations
         w = self.anchors[:, 2]
         h = self.anchors[:, 3]
-        _anchors = tf.cast(tf.stack([self.anchors[:, 1] - (h / 2), self.anchors[:, 0] - (w / 2), self.anchors[:, 1] + (h / 2), self.anchors[:, 0] + (w / 2)], axis=-1), tf.float32)
+        anchors = tf.cast(tf.stack(
+            [(self.anchors[:, 1] - (h / 2))*self.img_size_h, 
+            (self.anchors[:, 0] - (w / 2))*self.img_size_w, 
+            (self.anchors[:, 1] + (h / 2))*self.img_size_h, 
+            (self.anchors[:, 0] + (w / 2))*self.img_size_w], 
+            axis=-1), tf.float32)
 
-        pairwise_iou = self._iou(_anchors, gt_bbox) # # size: [num_objects, num_priors]; anchors along the row and ground_truth clong the columns
+        return anchors
 
-        each_prior_max = tf.reduce_max(pairwise_iou, axis=-1) # size [num_priors]; iou with ground truth with the anchors
+    def matching(self, pos_thresh, neg_thresh, gt_bbox, gt_labels):
+        _anchors = self.get_anchors()
+
+        # size: [num_objects, num_priors]; anchors along the row and 
+        # ground_truth clong the columns
+        pairwise_iou = self._iou(_anchors, gt_bbox) 
+
+        # size [num_priors]; iou with ground truth with the anchors
+        each_prior_max = tf.reduce_max(pairwise_iou, axis=-1) 
 
         if tf.shape(pairwise_iou)[-1] == 0: # No positive ground-truth boxes
-            return self.anchors*0, tf.cast(self.anchors[:, 0]*0, dtype=tf.int64), self.anchors*0, tf.cast(self.anchors[:, 0]*0, dtype=tf.int64)
+            return (_anchors*0, tf.cast(_anchors[:, 0]*0, dtype=tf.int64), 
+                _anchors*0, tf.cast(_anchors[:, 0]*0, dtype=tf.int64))
 
-        each_prior_index = tf.math.argmax(pairwise_iou, axis=-1) # size [num_priors]; id of groud truth having max iou with the anchors
+        # size [num_priors]; id of groud truth having max iou with the anchors
+        each_prior_index = tf.math.argmax(pairwise_iou, axis=-1) 
 
         each_box_max = tf.reduce_max(pairwise_iou, axis=0)
         each_box_index = tf.math.argmax(pairwise_iou, axis=0)
 
-        # For the max IoU prior for each gt box, set its IoU to 2. This ensures that it won't be filtered
-        # in the threshold step even if the IoU is under the negative threshold. This is because that we want
-        # at least one prior to match with each gt box or else we'd be wasting training data.
+        # For the max IoU prior for each gt box, set its IoU to 2. This ensures 
+        # that it won't be filtered in the threshold step even if the IoU is 
+        # under the negative threshold. This is because that we want
+        # at least one prior to match with each gt box or else we'd be wasting 
+        # training data.
 
         indices = tf.expand_dims(each_box_index,axis=-1)
 
-        updates = tf.cast(tf.tile(tf.constant([2]), tf.shape(each_box_index)), dtype=tf.float32)
-        each_prior_max = tf.tensor_scatter_nd_update(each_prior_max, indices, updates)
+        updates = tf.cast(tf.tile(tf.constant([2]), tf.shape(each_box_index)), 
+            dtype=tf.float32)
+        each_prior_max = tf.tensor_scatter_nd_update(each_prior_max, indices, 
+            updates)
 
         # Set the index of the pair (prior, gt) we set the overlap for above.
-        updates = tf.cast(tf.range(0,tf.shape(each_box_index)[0]),dtype=tf.int64)
-        each_prior_index = tf.tensor_scatter_nd_update(each_prior_index, indices, updates)
+        updates = tf.cast(tf.range(0,tf.shape(each_box_index)[0]),
+            dtype=tf.int64)
+        each_prior_index = tf.tensor_scatter_nd_update(each_prior_index, 
+            indices, updates)
 
-        each_prior_box = tf.gather(gt_bbox, each_prior_index) # size: [num_priors, 4]
-        conf = tf.squeeze(tf.gather(gt_labels, each_prior_index)) # the class of the max IoU gt box for each prior, size: [num_priors]
+        # size: [num_priors, 4]
+        each_prior_box = tf.gather(gt_bbox, each_prior_index) 
+
+        # the class of the max IoU gt box for each prior, size: [num_priors]
+        conf = tf.squeeze(tf.gather(gt_labels, each_prior_index)) 
 
         neutral_label_index = tf.where(each_prior_max < pos_thresh)
         background_label_index = tf.where(each_prior_max < neg_thresh)
 
-        conf = tf.tensor_scatter_nd_update(conf, neutral_label_index, -1*tf.ones(tf.size(neutral_label_index), dtype=tf.int64))
-        conf = tf.tensor_scatter_nd_update(conf, background_label_index, tf.zeros(tf.size(background_label_index), dtype=tf.int64))
+        conf = tf.tensor_scatter_nd_update(conf, 
+            neutral_label_index, 
+            -1*tf.ones(tf.size(neutral_label_index), dtype=tf.int64))
+        conf = tf.tensor_scatter_nd_update(conf, 
+            background_label_index, 
+            tf.zeros(tf.size(background_label_index), dtype=tf.int64))
 
         # anchors in [cx, cy, w, h]
-        offsets = self._encode(each_prior_box, self.anchors)
+        offsets = self._encode(each_prior_box, _anchors)
 
         return offsets, conf, each_prior_box, each_prior_index
