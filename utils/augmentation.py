@@ -1164,7 +1164,7 @@ def random_augmentation(img, bboxes, masks, output_size, proto_output_size, clas
              classes*0+1, # equal weights to all
              masks=masks)
 
-    if FLAG_SQUARE_CROP_SCALE > 0.5:
+    elif FLAG_SQUARE_CROP_SCALE > 0.5:
       (img, bboxes, classes, _, masks) = random_square_crop_by_scale(
              img,
              bboxes,

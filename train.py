@@ -415,7 +415,7 @@ def main(argv):
                           standard_fields.InputDataFields.groundtruth_instance_masks: gt_masked_image
                         })
 
-                    det_num = np.count_nonzero(output['detection_scores'][0].numpy()> 0.1)
+                    det_num = np.count_nonzero(output['detection_scores'][0].numpy()> 0.15)
 
                     det_boxes = output['detection_boxes'][0][:det_num]
                     det_boxes = det_boxes.numpy()*np.array([_h,_w,_h,_w])
