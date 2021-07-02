@@ -83,15 +83,12 @@ class YOLACTLoss(object):
         smoothl1loss = tf.keras.losses.Huber(delta=1., 
             reduction=tf.losses.Reduction.NONE)
 
-        if num_pos > 0.0:
-            loss_loc = smoothl1loss(gt_offset, pred_offset, 
-                                    self._loss_weight_box) 
-            loss_loc = tf.gather_nd(loss_loc, pos_indices)
-            loss_loc = tf.reduce_sum(loss_loc)
-            loss_loc /= num_pos
-            tf.debugging.assert_all_finite(loss_loc, "Loss Location NaN/Inf")
-        else:
-            loss_loc = 0.0
+        loss_loc = smoothl1loss(gt_offset, pred_offset, 
+                                self._loss_weight_box) 
+        loss_loc = tf.gather_nd(loss_loc, pos_indices)
+        loss_loc = tf.reduce_sum(loss_loc)
+        loss_loc = tf.math.divide_no_nan(loss_loc, num_pos)
+        tf.debugging.assert_all_finite(loss_loc, "Loss Location NaN/Inf")
 
         return loss_loc
 
