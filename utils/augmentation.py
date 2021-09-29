@@ -1492,33 +1492,44 @@ def random_augmentation(img, bboxes, masks, output_size, proto_output_size, clas
     #   rand_angle = tf.random.uniform([1], minval=0, maxval=360)[0]
     #   img, bboxes, masks = rotate_with_bboxes(img, masks, bboxes, rand_angle)
 
-    img, bboxes, masks = random_horizontal_flip(img, bboxes, masks, 123)
+    a_image, a_bboxes, a_masks = random_horizontal_flip(img, bboxes, masks, 123)
 
-    img, bboxes, masks = random_rotation90(img, bboxes, masks)
-    img, bboxes, masks = random_vertical_flip(img, bboxes, masks)
+    # a_image, a_bboxes, a_masks = random_rotation90(img, bboxes, masks)
+    # a_image, a_bboxes, a_masks = random_vertical_flip(img, bboxes, masks)
 
-    img = random_adjust_brightness(img)
-    img = random_adjust_contrast(img, min_delta=0.5, max_delta=1.5)
-    img = random_adjust_hue(img)
-    img = random_adjust_saturation(img, min_delta=0.5, max_delta=1.5)
+    # a_image = random_adjust_brightness(img)
+    # a_image = random_adjust_contrast(img, min_delta=0.5, max_delta=1.5)
+    # a_image = random_adjust_hue(img)
+    # a_image = random_adjust_saturation(img, min_delta=0.5, max_delta=1.5)
 
-    if FLAG_CROP > 0.5:
-      (img, bboxes, classes, _, masks) = random_crop_image(
-             img,
-             bboxes,
-             classes,
-             classes*0+1, # equal weights to all
-             masks=masks)
+    # if FLAG_CROP > 0.5:
+    #   (img, bboxes, classes, _, masks) = random_crop_image(
+    #          img,
+    #          bboxes,
+    #          classes,
+    #          classes*0+1, # equal weights to all
+    #          masks=masks)
 
-    elif FLAG_SQUARE_CROP_SCALE > 0.5:
-      (img, bboxes, classes, _, masks) = random_square_crop_by_scale(
-             img,
-             bboxes,
-             classes,
-             classes*0+1, # equal weights to all
-             masks=masks,
-             max_border=256,
-             scale_min=0.6,
-             scale_max=1.3)
+    # elif 
+    a_classes = classes
+    # if FLAG_SQUARE_CROP_SCALE > 0.5:
+    #   (a_image, a_bboxes, a_classes, _, a_masks) = random_square_crop_by_scale(
+    #          img,
+    #          bboxes,
+    #          classes,
+    #          classes*0+1, # equal weights to all
+    #          masks=masks,
+    #          max_border=256,
+    #          scale_min=0.6,
+    #          scale_max=1.3)
+    #   if a_image.get_shape().ndims is None:
+    #     image_shape = a_image.get_shape().with_rank(3)
+    #   else:
+    #     image_shape = a_image.get_shape().with_rank_at_least(3)
+    #   if any(x == 0 for x in image_shape[-3:]):
+    #     a_image = img
+    #     a_bboxes = bboxes
+    #     a_masks = masks
+    #     a_classes = classes
 
-    return img, bboxes, masks, classes
+    return a_image, a_bboxes, a_masks, a_classes

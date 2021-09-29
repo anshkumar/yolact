@@ -7,11 +7,11 @@ class YOLACTLoss(object):
     def __init__(self, 
                  img_h,
                  img_w, 
-                 loss_weight_cls=1,
+                 loss_weight_cls=1.0,
                  loss_weight_box=1.5,
                  loss_weight_mask=6.125,
                  loss_weight_mask_iou=25.0,
-                 loss_seg=1,
+                 loss_seg=1.0,
                  neg_pos_ratio=3,
                  max_masks_for_train=100, 
                  use_mask_iou=False):
@@ -77,20 +77,20 @@ class YOLACTLoss(object):
         # only compute losses from positive samples
         # get postive indices
         pos_indices = tf.where(conf_gt > 0 )
+        pred_offset = tf.gather_nd(pred_offset, pos_indices)
+        gt_offset = tf.gather_nd(gt_offset, pos_indices)
 
         # calculate the smoothL1(positive_pred, positive_gt) and return
-        num_pos = tf.cast(tf.shape(pos_indices)[0], tf.float32)
-        smoothl1loss = tf.keras.losses.Huber(delta=1., 
-            reduction=tf.losses.Reduction.NONE)
+        num_pos = tf.shape(gt_offset)[0]
+        smoothl1loss = tf.keras.losses.Huber(delta=1., reduction=tf.losses.Reduction.SUM)
+        if tf.reduce_sum(tf.cast(num_pos, tf.float32)) > 0.0:
+            loss_loc = smoothl1loss(gt_offset, pred_offset) / tf.cast(num_pos, tf.float32)
+        else:
+            loss_loc = 0.0
 
-        loss_loc = smoothl1loss(gt_offset, pred_offset, 
-                                self._loss_weight_box) 
-        loss_loc = tf.gather_nd(loss_loc, pos_indices)
-        loss_loc = tf.reduce_sum(loss_loc)
-        loss_loc = tf.math.divide_no_nan(loss_loc, num_pos)
         tf.debugging.assert_all_finite(loss_loc, "Loss Location NaN/Inf")
 
-        return loss_loc
+        return loss_loc*self._loss_weight_box
 
     def _focal_conf_sigmoid_loss(self, pred_cls, num_cls, conf_gt, 
             focal_loss_alpha=0.75, focal_loss_gamma=2):
@@ -109,7 +109,7 @@ class YOLACTLoss(object):
 
         pos_indices = tf.where(conf_gt > 0 )
         num_pos = tf.shape(pos_indices)[0]
-        return tf.math.divide_no_nan(loss, tf.cast(num_pos, tf.float32))
+        return loss #tf.math.divide_no_nan(loss, tf.cast(num_pos, tf.float32))
 
     def _loss_class(self, pred_cls, conf_gt):
         scce = tf.keras.losses.SparseCategoricalCrossentropy(from_logits=True,
@@ -121,30 +121,40 @@ class YOLACTLoss(object):
         return loss_conf
 
     def _loss_class_ohem(self, pred_cls, conf_gt, num_cls):
-        loss_c = self._loss_class(pred_cls, conf_gt) 
+        # num_cls includes background
+        batch_conf = tf.reshape(pred_cls, [-1, num_cls])
 
+        # Hard Negative Mining
+        # Using tf.nn.softmax or tf.math.log(tf.math.reduce_sum(tf.math.exp(batch_conf), 1)) to calculate log_sum_exp
+        # might cause NaN problem. This is a known problem https://github.com/tensorflow/tensorflow/issues/10142
+        # To get around this using tf.math.reduce_logsumexp and softmax_cross_entropy_with_logit
+
+        # This will be used to determine unaveraged confidence loss across all examples in a batch.
+        # https://github.com/dbolya/yolact/blob/b97e82d809e5e69dc628930070a44442fd23617a/layers/modules/multibox_loss.py#L251
+        # https://github.com/dbolya/yolact/blob/b97e82d809e5e69dc628930070a44442fd23617a/layers/box_utils.py#L316
+        # log_sum_exp = tf.math.log(tf.math.reduce_sum(tf.math.exp(batch_conf), 1))
+
+        # Using inbuild reduce_logsumexp to avoid NaN
+        # This function is more numerically stable than log(sum(exp(input))). It avoids overflows caused by taking the exp of large inputs and underflows caused by taking the log of small inputs.
+        log_sum_exp = tf.math.reduce_logsumexp(batch_conf, 1)
+        # tf.print(log_sum_exp)
+        loss_c = log_sum_exp - batch_conf[:,0]
+
+        loss_c = tf.reshape(loss_c, (tf.shape(pred_cls)[0], -1))  # (batch_size, 27429)
         pos_indices = tf.where(conf_gt > 0 )
-        loss_c = tf.tensor_scatter_nd_update(loss_c, pos_indices, 
-            tf.zeros(tf.shape(pos_indices)[0])) # filter out pos boxes
-        num_pos = tf.math.count_nonzero(tf.greater(conf_gt,0), axis=1, 
-            keepdims=True)
-        num_neg = tf.clip_by_value(num_pos * self._neg_pos_ratio, 
-            clip_value_min=tf.constant(self._neg_pos_ratio, dtype=tf.int64), 
-            clip_value_max=tf.cast(tf.shape(conf_gt)[1]-1, tf.int64))
+        loss_c = tf.tensor_scatter_nd_update(loss_c, pos_indices, tf.zeros(tf.shape(pos_indices)[0])) # filter out pos boxes
+        num_pos = tf.math.count_nonzero(tf.greater(conf_gt,0), axis=1, keepdims=True)
+        num_neg = tf.clip_by_value(num_pos * self._neg_pos_ratio, clip_value_min=tf.constant(self._neg_pos_ratio, dtype=tf.int64), clip_value_max=tf.cast(tf.shape(conf_gt)[1]-1, tf.int64))
 
-        # filter out neutrals (conf_gt = -1)
         neutrals_indices = tf.where(conf_gt < 0 )
-        loss_c = tf.tensor_scatter_nd_update(loss_c, neutrals_indices, 
-            tf.zeros(tf.shape(neutrals_indices)[0])) 
+        loss_c = tf.tensor_scatter_nd_update(loss_c, neutrals_indices, tf.zeros(tf.shape(neutrals_indices)[0])) # filter out neutrals (conf_gt = -1)
 
         idx = tf.argsort(loss_c, axis=1, direction='DESCENDING')
         idx_rank = tf.argsort(idx, axis=1)
 
-        # Just in case there aren't enough negatives, don't start using 
-        # positives as negatives
+        # Just in case there aren't enough negatives, don't start using positives as negatives
         # Filter out neutrals and positive
-        neg_indices = tf.where(
-            (tf.cast(idx_rank, dtype=tf.int64) < num_neg) & (conf_gt == 0))
+        neg_indices = tf.where((tf.cast(idx_rank, dtype=tf.int64) < num_neg) & (conf_gt == 0))
 
         # neg_indices shape is (batch_size, no_prior)
         # pred_cls shape is (batch_size, no_prior, no_class)
@@ -153,23 +163,15 @@ class YOLACTLoss(object):
         pos_pred_cls_for_loss = tf.gather_nd(pred_cls, pos_indices)
         pos_gt_for_loss = tf.gather_nd(conf_gt, pos_indices)
 
-        target_logits = tf.concat(
-            [pos_pred_cls_for_loss, neg_pred_cls_for_loss], axis=0)
+        target_logits = tf.concat([pos_pred_cls_for_loss, neg_pred_cls_for_loss], axis=0)
         target_labels = tf.concat([pos_gt_for_loss, neg_gt_for_loss], axis=0)
         target_labels = tf.one_hot(tf.squeeze(target_labels), depth=num_cls)
 
         if tf.reduce_sum(tf.cast(num_pos, tf.float32)) > 0.0:
-            loss_conf = tf.reduce_sum(
-                tf.nn.softmax_cross_entropy_with_logits(
-                    target_labels, 
-                    target_logits)
-                )/tf.reduce_sum(tf.cast(num_pos, tf.float32))
+            loss_conf = tf.reduce_sum(tf.nn.softmax_cross_entropy_with_logits(target_labels, target_logits)) / tf.reduce_sum(tf.cast(num_pos, tf.float32))
         else:
-            loss_conf = tf.reduce_sum(
-                tf.nn.softmax_cross_entropy_with_logits(
-                    target_labels, 
-                    target_logits))/tf.reduce_sum(tf.cast(num_neg, tf.float32))
-        return loss_conf
+            loss_conf = 0.0
+        return loss_conf*self._loss_weight_cls
 
     def _loss_mask(self, model, prior_max_index, coef_p, proto_p, mask_gt, 
         prior_max_box, conf_gt, classes, use_weight_sum=False, 
@@ -228,23 +230,32 @@ class YOLACTLoss(object):
             mask_p = tf.linalg.matmul(proto_p[i], _pos_coef, transpose_a=False, 
                 transpose_b=True) # [proto_height, proto_width, num_pos]
             
-            mask_p = tf.sigmoid(mask_p)
             # crop the pred (not real crop, zero out the area outside the 
             # gt box)
             if use_cropped_mask:
                 # _pos_prior_box.shape: (num_pos, 4)
-                bboxes_for_cropping = tf.stack([
-                    _pos_prior_box[:, 0]/self.img_h, 
-                    _pos_prior_box[:, 1]/self.img_w,
-                    _pos_prior_box[:, 2]/self.img_h,
-                    _pos_prior_box[:, 3]/self.img_w
-                    ], axis=-1)
-
-                mask_p = utils.crop(mask_p, bboxes_for_cropping)  
+                # bboxes_for_cropping = tf.stack([
+                #     _pos_prior_box[:, 0]/self.img_h, 
+                #     _pos_prior_box[:, 1]/self.img_w,
+                #     _pos_prior_box[:, 2]/self.img_h,
+                #     _pos_prior_box[:, 3]/self.img_w
+                #     ], axis=-1)
+                # mask_p = utils.crop(mask_p, bboxes_for_cropping)
+                mask_p = utils.crop(mask_p, _pos_prior_box)  
                 # pos_mask_gt = utils.crop(pos_mask_gt, _pos_prior_box)
 
             mask_p = tf.clip_by_value(mask_p, clip_value_min=0.0, 
                 clip_value_max=1.0)
+
+            # Divide the loss by normalized boxes width and height to get 
+            # ROIAlign affect. 
+
+            # Getting normalized boxes widths and height
+            # boxes_w = (_pos_prior_box[:, 3] - _pos_prior_box[:, 1])/self.img_w
+            # boxes_h = (_pos_prior_box[:, 2] - _pos_prior_box[:, 0])/self.img_h
+            boxes_w = (_pos_prior_box[:, 3] - _pos_prior_box[:, 1])
+            boxes_h = (_pos_prior_box[:, 2] - _pos_prior_box[:, 0])
+
             # Adding extra dimension as i/p and o/p shapes are different with 
             # "reduction" is set to None.
             # https://github.com/tensorflow/tensorflow/issues/27190
@@ -252,27 +263,19 @@ class YOLACTLoss(object):
             _mask_p = tf.transpose(mask_p, (2,0,1))
             _pos_mask_gt = tf.expand_dims(_pos_mask_gt, axis=-1)
             _mask_p = tf.expand_dims(_mask_p, axis=-1)
-            # _pos_mask_gt = tf.reshape(_pos_mask_gt, [ -1, proto_h * proto_w])
-            # _mask_p = tf.reshape(_mask_p, [ -1, proto_h * proto_w])
                        
             bce = tf.keras.losses.BinaryCrossentropy(from_logits=False, 
                 reduction=tf.losses.Reduction.NONE)
+            mask_loss = bce(_pos_mask_gt, _mask_p)
 
-            # Divide the loss by normalized boxes width and height to get 
-            # ROIAlign affect. 
-
-            # Getting normalized boxes widths and height
-            boxes_w = (_pos_prior_box[:, 3] - _pos_prior_box[:, 1])/self.img_w
-            boxes_h = (_pos_prior_box[:, 2] - _pos_prior_box[:, 0])/self.img_h
-            mask_loss = bce(_pos_mask_gt, _mask_p, self._loss_weight_mask)
-
+            # mask_loss = tf.nn.sigmoid_cross_entropy_with_logits(pos_mask_gt, mask_p)
             mask_loss = tf.reduce_mean(mask_loss, 
                                         axis=(1,2)) 
 
             tf.debugging.assert_all_finite(mask_loss, "Mask Loss NaN/Inf")
             mask_loss = tf.math.divide_no_nan(mask_loss, boxes_w * boxes_h)
             
-            mask_loss = tf.reduce_sum(mask_loss)
+            mask_loss = tf.reduce_sum(mask_loss)*self._loss_weight_mask
             
             if old_num_pos > num_pos:
                 mask_loss *= tf.cast(old_num_pos / num_pos, tf.float32)
@@ -378,12 +381,14 @@ class YOLACTLoss(object):
             segment_gt = tf.tensor_scatter_nd_max(segment_gt, indices=obj_cls, 
                 updates=masks)
             segment_gt = tf.transpose(segment_gt, perm=(1, 2, 0))
-            
-            loss = tf.keras.losses.binary_crossentropy(
-                segment_gt[:,:,1:], cur_segment,  from_logits=True)
-            loss *= self._loss_weight_seg
-            loss = tf.math.reduce_sum(loss)
-            loss_s += loss
 
-        loss_s /= (tf.cast(mask_h, tf.float32) * tf.cast(mask_w, tf.float32))
-        return loss_s
+            segment_gt = tf.expand_dims(segment_gt, axis=-1)
+            cur_segment = tf.expand_dims(cur_segment, axis=-1)
+            cce = tf.keras.losses.BinaryCrossentropy(from_logits=True,
+                reduction=tf.keras.losses.Reduction.NONE)
+            loss = cce(segment_gt[:,:,1:,:], cur_segment)
+            loss = tf.reduce_mean(loss)
+            loss_s += loss            
+
+        loss_s /= tf.cast(batch_size, dtype=tf.float32)
+        return loss_s*self._loss_weight_seg

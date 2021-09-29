@@ -24,7 +24,7 @@ class Yolact(tf.keras.Model):
         out = ['conv3_block4_out', 'conv4_block6_out', 'conv5_block3_out']
 
         if not use_dcn:
-            base_model = resnet.ResNet50(
+            base_model = tf.keras.applications.resnet50.ResNet50(
                 input_shape=(img_h,img_w,3),
                 include_top=False,
                 layers=tf.keras.layers,
@@ -102,13 +102,14 @@ class Yolact(tf.keras.Model):
         # post-processing for evaluation
         self.detect = Detect(num_class, max_output_size=300, 
             per_class_max_output_size=100,
-            conf_thresh=0.05, nms_thresh=0.5)
+            conf_thresh=0.15, nms_thresh=0.5)
         self.max_output_size = 300
 
     @tf.function
     def call(self, inputs, training=False):
         # backbone(ResNet + FPN)
         inputs = tf.cast(inputs, tf.float32)
+        # inputs = inputs / 255.0
         inputs = tf.keras.applications.resnet50.preprocess_input(inputs)
 
         # https://www.tensorflow.org/tutorials/images/transfer_learning#\

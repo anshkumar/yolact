@@ -39,8 +39,8 @@ class Anchor(object):
                 y = (j + 0.5) / f_size[0]
                 for ars in aspect_ratio:
                     a = sqrt(ars)
-                    w = scale[idx] * a / f_size[1] # normalize the width value
-                    h = scale[idx] / a / f_size[0]
+                    w = scale[idx] * a / self.img_size_w
+                    h = scale[idx] / a / self.img_size_h
                     # directly use point form here => [cx, cy, w, h]
                     prior_boxes += [x, y, w, h]
                     count_anchor += 1
@@ -98,6 +98,7 @@ class Anchor(object):
         tf.debugging.assert_all_finite(g_hat_h, 
             "Ground truth box width encoding NaN/Inf")
         offsets = tf.stack([g_hat_cx, g_hat_cy, g_hat_w, g_hat_h], axis=-1)
+        
         return offsets
 
     def _area(self, boxlist, scope=None):
@@ -171,10 +172,10 @@ class Anchor(object):
         w = self.anchors_norm[:, 2]
         h = self.anchors_norm[:, 3]
         anchors_yxyx = tf.cast(tf.stack(
-            [(self.anchors_norm[:, 1] - (h / 2))*self.img_size_h, 
-            (self.anchors_norm[:, 0] - (w / 2))*self.img_size_w, 
-            (self.anchors_norm[:, 1] + (h / 2))*self.img_size_h, 
-            (self.anchors_norm[:, 0] + (w / 2))*self.img_size_w], 
+            [(self.anchors_norm[:, 1] - (h / 2)), 
+            (self.anchors_norm[:, 0] - (w / 2)), 
+            (self.anchors_norm[:, 1] + (h / 2)), 
+            (self.anchors_norm[:, 0] + (w / 2))], 
             axis=-1), tf.float32)
 
         return anchors_yxyx
