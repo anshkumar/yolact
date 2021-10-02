@@ -58,7 +58,7 @@ flags.DEFINE_list('aspect_ratio', [1, 0.5, 2],
                    'comma-separated list of strings for aspect ratio')
 flags.DEFINE_list('scale', [24, 48, 96, 192, 384],
                    'comma-separated list of strings for scales in pixels')
-flags.DEFINE_float('lr', 1e-4,
+flags.DEFINE_float('lr', 1e-3,
                    'learning rate')
 flags.DEFINE_float('warmup_lr', 1e-4,
                    'learning rate')
@@ -228,8 +228,8 @@ def main(argv):
     #   initial_lr=FLAGS.lr, 
     #   total_steps=FLAGS.lr_total_steps)
     lr_schedule = tf.optimizers.schedules.PiecewiseConstantDecay(
-      [int(0.35*FLAGS.train_iter), int(0.45*FLAGS.train_iter), int(0.5*FLAGS.train_iter)], 
-      [FLAGS.lr, 0.1*FLAGS.lr, 0.01*FLAGS.lr, 0.001*FLAGS.lr])
+      [5000, int(0.35*FLAGS.train_iter), int(0.45*FLAGS.train_iter), int(0.5*FLAGS.train_iter)], 
+      [0.1*FLAGS.lr, FLAGS.lr, 0.1*FLAGS.lr, 0.01*FLAGS.lr, 0.001*FLAGS.lr])
 
     logging.info("Initiate the Optimizer and Loss function...")
     if FLAGS.optimizer == 'SGD':

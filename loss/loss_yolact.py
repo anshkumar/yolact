@@ -168,7 +168,10 @@ class YOLACTLoss(object):
         target_labels = tf.one_hot(tf.squeeze(target_labels), depth=num_cls)
 
         if tf.reduce_sum(tf.cast(num_pos, tf.float32)) > 0.0:
-            loss_conf = tf.reduce_sum(tf.nn.softmax_cross_entropy_with_logits(target_labels, target_logits)) / tf.reduce_sum(tf.cast(num_pos, tf.float32))
+            cce = tf.keras.losses.CategoricalCrossentropy(from_logits=False,
+                reduction=tf.keras.losses.Reduction.SUM)
+            loss_conf = cce(target_labels, target_logits) / tf.reduce_sum(tf.cast(num_pos, tf.float32))
+            # loss_conf = tf.reduce_sum(tf.nn.softmax_cross_entropy_with_logits(target_labels, target_logits)) / tf.reduce_sum(tf.cast(num_pos, tf.float32))
         else:
             loss_conf = 0.0
         return loss_conf*self._loss_weight_cls
