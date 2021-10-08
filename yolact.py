@@ -142,9 +142,6 @@ class Yolact(tf.keras.Model):
         pred_offset = tf.concat(pred_offset, axis=1)
         pred_mask_coef = tf.concat(pred_mask_coef, axis=1)
 
-        # Apply softmax to the prediction class
-        pred_cls = tf.nn.softmax(pred_cls, axis=-1)
-
         if training:
             pred = {
                 'pred_cls': pred_cls,
@@ -163,6 +160,8 @@ class Yolact(tf.keras.Model):
                 'num_detections': tf.constant(0)}
             pred.update(result)
         else:
+            # Apply softmax to the prediction class
+            pred_cls = tf.nn.softmax(pred_cls, axis=-1)
             pred = {
                 'pred_cls': pred_cls,
                 'pred_offset': pred_offset,

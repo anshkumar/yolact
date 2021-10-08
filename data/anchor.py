@@ -93,10 +93,14 @@ class Anchor(object):
         else:
             g_hat_w = tf.math.log(center_gt[:, 2] / center_anchors[:, 2])
             g_hat_h = tf.math.log(center_gt[:, 3] / center_anchors[:, 3])
+        tf.debugging.assert_all_finite(g_hat_cx, 
+            "Ground truth box x encoding NaN/Inf")
+        tf.debugging.assert_all_finite(g_hat_cy, 
+            "Ground truth box y encoding NaN/Inf")
         tf.debugging.assert_all_finite(g_hat_w, 
             "Ground truth box width encoding NaN/Inf")
         tf.debugging.assert_all_finite(g_hat_h, 
-            "Ground truth box width encoding NaN/Inf")
+            "Ground truth box height encoding NaN/Inf")
         offsets = tf.stack([g_hat_cx, g_hat_cy, g_hat_w, g_hat_h], axis=-1)
         
         return offsets

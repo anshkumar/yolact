@@ -1492,7 +1492,7 @@ def random_augmentation(img, bboxes, masks, output_size, proto_output_size, clas
     #   rand_angle = tf.random.uniform([1], minval=0, maxval=360)[0]
     #   img, bboxes, masks = rotate_with_bboxes(img, masks, bboxes, rand_angle)
 
-    a_image, a_bboxes, a_masks = random_horizontal_flip(img, bboxes, masks, 123)
+    # a_image, a_bboxes, a_masks = random_horizontal_flip(img, bboxes, masks, 123)
 
     # a_image, a_bboxes, a_masks = random_rotation90(img, bboxes, masks)
     # a_image, a_bboxes, a_masks = random_vertical_flip(img, bboxes, masks)
@@ -1511,7 +1511,7 @@ def random_augmentation(img, bboxes, masks, output_size, proto_output_size, clas
     #          masks=masks)
 
     # elif 
-    a_classes = classes
+    # a_classes = classes
     # if FLAG_SQUARE_CROP_SCALE > 0.5:
     #   (a_image, a_bboxes, a_classes, _, a_masks) = random_square_crop_by_scale(
     #          img,
@@ -1532,4 +1532,5 @@ def random_augmentation(img, bboxes, masks, output_size, proto_output_size, clas
     #     a_masks = masks
     #     a_classes = classes
 
-    return a_image, a_bboxes, a_masks, a_classes
+    return img, bboxes, masks, classes
+    # return a_image, a_bboxes, a_masks, a_classes

@@ -24,7 +24,7 @@ import cv2
 from google.protobuf import text_format
 from protos import string_int_label_map_pb2
 
-tf.random.set_seed(1234)
+tf.random.set_seed(123)
 
 FLAGS = flags.FLAGS
 
@@ -58,11 +58,11 @@ flags.DEFINE_list('aspect_ratio', [1, 0.5, 2],
                    'comma-separated list of strings for aspect ratio')
 flags.DEFINE_list('scale', [24, 48, 96, 192, 384],
                    'comma-separated list of strings for scales in pixels')
-flags.DEFINE_float('lr', 2e-3,
+flags.DEFINE_float('lr', 1e-3,
                    'learning rate')
-flags.DEFINE_float('warmup_lr', 2e-4,
+flags.DEFINE_float('warmup_lr', 1e-4,
                    'learning rate')
-flags.DEFINE_float('warmup_steps', 5000,
+flags.DEFINE_float('warmup_steps', 500,
                    'learning rate')
 flags.DEFINE_float('lr_total_steps', 1200000,
                    'learning rate total steps')
@@ -72,7 +72,7 @@ flags.DEFINE_float('weight_decay', 5 * 1e-4,
                    'weight_decay')
 flags.DEFINE_float('print_interval', 100,
                    'number of iteration between printing loss')
-flags.DEFINE_float('save_interval', 14786,
+flags.DEFINE_float('save_interval', 14786*5,
                    'number of iteration between saving model(checkpoint)')
 flags.DEFINE_float('valid_iter', 5000,
                    'number of iteration during validation')
@@ -225,21 +225,22 @@ def main(argv):
     # -----------------------------------------------------------------
     # Choose the Optimizor, Loss Function, and Metrics, learning rate schedule
     # lr_schedule = learning_rate_schedule.Yolact_LearningRateSchedule(
-    #   warmup_steps=500, 
+    #   warmup_steps=FLAGS.warmup_steps, 
     #   warmup_lr=FLAGS.warmup_lr,
     #   initial_lr=FLAGS.lr, 
     #   total_steps=FLAGS.lr_total_steps)
     lr_schedule = tf.optimizers.schedules.PiecewiseConstantDecay(
-      [FLAGS.warmup_steps, int(0.35*FLAGS.train_iter), int(0.45*FLAGS.train_iter), int(0.5*FLAGS.train_iter)], 
-      [FLAGS.warmup_lr, FLAGS.lr, 0.1*FLAGS.lr, 0.01*FLAGS.lr, 0.001*FLAGS.lr])
+      [FLAGS.warmup_steps, int(0.35*FLAGS.train_iter), int(0.75*FLAGS.train_iter), int(0.875*FLAGS.train_iter), int(0.9375*FLAGS.train_iter)], 
+      [FLAGS.warmup_lr, FLAGS.lr, 0.1*FLAGS.lr, 0.01*FLAGS.lr, 0.001*FLAGS.lr, 0.0001*FLAGS.lr])
 
     logging.info("Initiate the Optimizer and Loss function...")
     if FLAGS.optimizer == 'SGD':
       logging.info("Using SGDW optimizer")
-      optimizer = tfa.optimizers.SGDW(
-        learning_rate=lr_schedule, 
-        momentum=FLAGS.momentum, 
-        weight_decay=FLAGS.weight_decay)
+      # optimizer = tfa.optimizers.SGDW(
+      #   learning_rate=lr_schedule, 
+      #   momentum=FLAGS.momentum, 
+      #   weight_decay=FLAGS.weight_decay)
+      optimizer = tf.keras.optimizers.SGD(learning_rate=lr_schedule, momentum=FLAGS.momentum)
     else:
       # wd = lambda: FLAGS.weight_decay * lr_schedule(lr_schedule.global_step)
       logging.info("Using Adam optimizer")
@@ -323,7 +324,7 @@ def main(argv):
                 output = model(image, training=True)
 
                 loc_loss, conf_loss, mask_loss, mask_iou_loss, seg_loss, \
-                total_loss = criterion(model, output, labels, FLAGS.num_class+1)
+                total_loss = criterion(model, output, labels, FLAGS.num_class+1, image)
 
             grads = tape.gradient(total_loss, model.trainable_variables)
             optimizer.apply_gradients(zip(grads, model.trainable_variables))
