@@ -1,1 +1,1 @@
-python3 train.py -tfrecord_train_dir '/home/deploy/ved/coco/records/train' -tfrecord_val_dir '/home/deploy/ved/coco/records/val' -label_map 'label_map.pbtxt' -train_iter '800000' -batch_size '8' -num_class '90' -base_model_trainable True -print_interval 100
+python3 train.py -tfrecord_train_dir '/home/deploy/ved/coco/records/train' -tfrecord_val_dir '/home/deploy/ved/coco/records/val' -label_map 'label_map.pbtxt' -train_iter '800000' -lr_total_steps '800000' -img_h '512' -img_w '512' -batch_size '8' -num_class '90' -base_model_trainable True -print_interval 100 
