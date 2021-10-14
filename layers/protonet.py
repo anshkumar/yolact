@@ -10,22 +10,23 @@ class ProtoNet(tf.keras.layers.Layer):
 
     def __init__(self, num_prototype):
         super(ProtoNet, self).__init__()
+
         self.Conv1 = tf.keras.layers.Conv2D(256, (3, 3), 1, padding="same",
-                                            kernel_initializer=tf.keras.initializers.glorot_uniform(),
+                                            kernel_initializer=tf.keras.initializers.VarianceScaling(mode="fan_avg", distribution='uniform'),
                                             activation="relu")
         self.Conv2 = tf.keras.layers.Conv2D(256, (3, 3), 1, padding="same",
-                                            kernel_initializer=tf.keras.initializers.glorot_uniform(),
+                                            kernel_initializer=tf.keras.initializers.VarianceScaling(mode="fan_avg", distribution='uniform'),
                                             activation="relu")
         self.Conv3 = tf.keras.layers.Conv2D(256, (3, 3), 1, padding="same",
-                                            kernel_initializer=tf.keras.initializers.glorot_uniform(),
+                                            kernel_initializer=tf.keras.initializers.VarianceScaling(mode="fan_avg", distribution='uniform'),
                                             activation="relu")
         self.upSampling = tf.keras.layers.UpSampling2D(size=(2, 2), interpolation='bilinear')
         self.Conv4 = tf.keras.layers.Conv2D(256, (3, 3), 1, padding="same",
-                                            kernel_initializer=tf.keras.initializers.glorot_uniform(),
+                                            kernel_initializer=tf.keras.initializers.VarianceScaling(mode="fan_avg", distribution='uniform'),
                                             activation="relu")
 
         self.finalConv = tf.keras.layers.Conv2D(num_prototype, (1, 1), 1, padding="same",
-                                                kernel_initializer=tf.keras.initializers.glorot_uniform(),
+                                                kernel_initializer=tf.keras.initializers.VarianceScaling(mode="fan_avg", distribution='uniform'),
                                                 activation='relu')
 
     def call(self, p3):

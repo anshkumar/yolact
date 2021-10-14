@@ -28,8 +28,8 @@ class YOLACTLoss(object):
                  img_h,
                  img_w, 
                  loss_weight_cls=1.0,
-                 loss_weight_box=1.0,
-                 loss_weight_mask=1.0,
+                 loss_weight_box=1.5,
+                 loss_weight_mask=6.125,
                  loss_weight_mask_iou=25.0,
                  loss_seg=1.0,
                  neg_pos_ratio=3,
@@ -81,6 +81,14 @@ class YOLACTLoss(object):
         self.num_classes = num_classes
         self.model = model
 
+        # pos_boxes = []
+
+        # for i in range(label['all_offsets'].shape[0]):
+        #     boxes_decoded = model.detect._decode(label['all_offsets'][i], model.priors)
+        #     pos_indices = tf.where(self.conf_gt[i] > 0 )
+        #     pos_boxes_decoded = tf.gather_nd(boxes_decoded, pos_indices)
+        #     pos_boxes.append(pos_boxes_decoded.numpy())
+
         loc_loss = self._loss_location() 
 
         conf_loss = self._loss_class_ohem() 
@@ -104,9 +112,10 @@ class YOLACTLoss(object):
 
         # calculate the smoothL1(positive_pred, positive_gt) and return
         num_pos = tf.shape(gt_offset)[0]
-        smoothl1loss = RetinaNetBoxLoss(delta=1.)
+        # smoothl1loss = RetinaNetBoxLoss(delta=1.)
+        smoothl1loss = tf.keras.losses.Huber(delta=1.)
         if tf.reduce_sum(tf.cast(num_pos, tf.float32)) > 0.0:
-            loss_loc = tf.reduce_sum(smoothl1loss(gt_offset, pred_offset)) / tf.cast(num_pos, tf.float32)
+            loss_loc = smoothl1loss(gt_offset, pred_offset)
         else:
             loss_loc = 0.0
 
@@ -189,7 +198,7 @@ class YOLACTLoss(object):
         target_labels = tf.one_hot(tf.squeeze(target_labels), depth=self.num_classes)
 
         if tf.reduce_sum(tf.cast(num_pos, tf.float32)+tf.cast(num_neg, tf.float32)) > 0.0:
-            cce = tf.keras.losses.CategoricalCrossentropy(from_logits=False,
+            cce = tf.keras.losses.CategoricalCrossentropy(from_logits=True,
                 reduction=tf.keras.losses.Reduction.SUM)
             loss_conf = cce(target_labels, target_logits) / tf.reduce_sum(tf.cast(num_pos, tf.float32)+tf.cast(num_neg, tf.float32))
             # loss_conf = tf.reduce_sum(tf.nn.softmax_cross_entropy_with_logits(target_labels, target_logits)) / tf.reduce_sum(tf.cast(num_pos, tf.float32))
@@ -266,8 +275,8 @@ class YOLACTLoss(object):
                 mask_p = utils.crop(mask_p, _pos_prior_box)  
                 # pos_mask_gt = utils.crop(pos_mask_gt, _pos_prior_box)
 
-            mask_p = tf.clip_by_value(mask_p, clip_value_min=0.0, 
-                clip_value_max=1.0)
+            # mask_p = tf.clip_by_value(mask_p, clip_value_min=0.0, 
+            #     clip_value_max=1.0)
 
             # Divide the loss by normalized boxes width and height to get 
             # ROIAlign affect. 
@@ -299,7 +308,7 @@ class YOLACTLoss(object):
             if use_cropped_mask:
                 mask_loss = tf.math.divide_no_nan(mask_loss, boxes_w * boxes_h)
             
-            mask_loss = tf.reduce_sum(mask_loss)*self._loss_weight_mask
+            mask_loss = tf.reduce_sum(mask_loss)
             
             if old_num_pos > num_pos:
                 mask_loss *= tf.cast(old_num_pos / num_pos, tf.float32)
@@ -367,7 +376,7 @@ class YOLACTLoss(object):
 
             loss_iou += loss_i
 
-        return loss_m , loss_iou
+        return loss_m*self._loss_weight_mask , loss_iou
 
     def _mask_iou(self, mask1, mask2):
         intersection = tf.reduce_sum(mask1*mask2, axis=(0, 1))

@@ -97,7 +97,7 @@ class Yolact(tf.keras.Model):
         # This implementation differs from the original used in yolact
         self.predictionHead = PredictionModule(256, len(aspect_ratio), 
                                                num_class, num_mask)
-        self.fastMaskIoUNet = FastMaskIoUNet(num_class)
+        # self.fastMaskIoUNet = FastMaskIoUNet(num_class)
 
         # post-processing for evaluation
         self.detect = Detect(num_class, max_output_size=300, 
@@ -160,8 +160,6 @@ class Yolact(tf.keras.Model):
                 'num_detections': tf.constant(0)}
             pred.update(result)
         else:
-            # Apply softmax to the prediction class
-            pred_cls = tf.nn.softmax(pred_cls, axis=-1)
             pred = {
                 'pred_cls': pred_cls,
                 'pred_offset': pred_offset,

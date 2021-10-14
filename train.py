@@ -72,9 +72,9 @@ flags.DEFINE_float('weight_decay', 5 * 1e-4,
                    'weight_decay')
 flags.DEFINE_float('print_interval', 100,
                    'number of iteration between printing loss')
-flags.DEFINE_float('save_interval', 14786*5,
+flags.DEFINE_float('save_interval', 10000,
                    'number of iteration between saving model(checkpoint)')
-flags.DEFINE_float('valid_iter', 5000,
+flags.DEFINE_float('valid_iter', 20,
                    'number of iteration during validation')
 flags.DEFINE_boolean('model_quantization', False,
                     'do quantization aware training')
@@ -223,30 +223,53 @@ def main(argv):
       subset='val')
     
     # -----------------------------------------------------------------
-    # Choose the Optimizor, Loss Function, and Metrics, learning rate schedule
-    # lr_schedule = learning_rate_schedule.Yolact_LearningRateSchedule(
-    #   warmup_steps=FLAGS.warmup_steps, 
-    #   warmup_lr=FLAGS.warmup_lr,
-    #   initial_lr=FLAGS.lr, 
-    #   total_steps=FLAGS.lr_total_steps)
-    lr_schedule = tf.optimizers.schedules.PiecewiseConstantDecay(
-      [FLAGS.warmup_steps, int(0.35*FLAGS.train_iter), int(0.75*FLAGS.train_iter), int(0.875*FLAGS.train_iter), int(0.9375*FLAGS.train_iter)], 
-      [FLAGS.warmup_lr, FLAGS.lr, 0.1*FLAGS.lr, 0.01*FLAGS.lr, 0.001*FLAGS.lr, 0.0001*FLAGS.lr])
+    # Choose the Optimizor, Loss Function, and Metrics, learning rate schedule 
+
+    # add weight decay
+    def add_weight_decay(model, weight_decay):
+        # https://github.com/keras-team/keras/issues/12053
+        if (weight_decay is None) or (weight_decay == 0.0):
+            return
+
+        # recursion inside the model
+        def add_decay_loss(m, factor):
+            if isinstance(m, tf.keras.Model):
+                for layer in m.layers:
+                    add_decay_loss(layer, factor)
+            else:
+                for param in m.trainable_weights:
+                    with tf.keras.backend.name_scope('weight_regularizer'):
+                        regularizer = lambda: tf.keras.regularizers.l2(factor)(param)
+                        m.add_loss(regularizer)
+
+        # weight decay and l2 regularization differs by a factor of 2
+        # because the weights are updated as w := w - l_r * L(w,x) - 2 * l_r * l2 * w
+        # where L-r is learning rate, l2 is L2 regularization factor. The whole (2 * l2)
+        # forms a weight decay factor. So, in pytorch where weight decay is directly given
+        # and in tf where l2 regularization has to be used differs by a factor of 2.
+        add_decay_loss(model, weight_decay/2.0)
+        return
+
+    add_weight_decay(model, FLAGS.weight_decay)   
 
     logging.info("Initiate the Optimizer and Loss function...")
     if FLAGS.optimizer == 'SGD':
-      logging.info("Using SGDW optimizer")
-      # optimizer = tfa.optimizers.SGDW(
-      #   learning_rate=lr_schedule, 
-      #   momentum=FLAGS.momentum, 
-      #   weight_decay=FLAGS.weight_decay)
-      optimizer = tf.keras.optimizers.SGD(learning_rate=lr_schedule, momentum=FLAGS.momentum)
+      logging.info("Using SGD optimizer")
+      lr_schedule = tf.optimizers.schedules.PiecewiseConstantDecay(
+        [FLAGS.warmup_steps, int(0.35*FLAGS.train_iter), int(0.75*FLAGS.train_iter), int(0.875*FLAGS.train_iter), int(0.9375*FLAGS.train_iter)], 
+        [FLAGS.warmup_lr, FLAGS.lr, 0.1*FLAGS.lr, 0.01*FLAGS.lr, 0.001*FLAGS.lr, 0.0001*FLAGS.lr])
+      optimizer = tf.keras.optimizers.SGD(learning_rate=lr_schedule, momentum=FLAGS.momentum, clipnorm=10)
     else:
       # wd = lambda: FLAGS.weight_decay * lr_schedule(lr_schedule.global_step)
       logging.info("Using Adam optimizer")
+      lr_schedule = learning_rate_schedule.Yolact_LearningRateSchedule(
+        warmup_steps=FLAGS.warmup_steps, 
+        warmup_lr=FLAGS.warmup_lr,
+        initial_lr=FLAGS.lr, 
+        total_steps=FLAGS.lr_total_steps)
       optimizer = tfa.optimizers.AdamW(
         learning_rate=lr_schedule, 
-        weight_decay=FLAGS.weight_decay)
+        weight_decay=FLAGS.weight_decay, clipnorm=10)
     criterion = loss_yolact.YOLACTLoss(img_h= FLAGS.img_h, img_w=FLAGS.img_w,
                                         use_mask_iou=FLAGS.use_mask_iou)
     train_loss = tf.keras.metrics.Mean('train_loss', dtype=tf.float32)

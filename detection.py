@@ -52,9 +52,12 @@ class Detect(object):
 
         num_class = tf.shape(class_p)[2] - 1
 
+        # Apply softmax to the prediction class
+        class_p = tf.nn.softmax(class_p, axis=-1)
+
         # exclude the background class
         class_p = class_p[:, :, 1:]
-
+        
         # get the max score class of 27429 predicted boxes
         class_p_max = tf.reduce_max(class_p, axis=-1)  # [1, 27429]
         batch_size = tf.shape(class_p_max)[0]

@@ -18,7 +18,7 @@ This scripts follows the label map decoder format and supports detection
 boxes, instance masks and captions.
 
 Example usage:
-    python create_coco_tf_record.py --logtostderr \
+    python create_coco_tfrecord.py --logtostderr \
       --image_dir="${TRAIN_IMAGE_DIR}" \
       --image_info_file="${TRAIN_IMAGE_INFO_FILE}" \
       --object_annotations_file="${TRAIN_ANNOTATIONS_FILE}" \
