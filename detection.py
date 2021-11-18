@@ -220,7 +220,7 @@ class Detect(object):
 
         return boxes
 
-    def _traditional_nms(self, boxes, mask_coef, scores, iou_threshold=0.5, score_threshold=0.15, max_class_output_size=100, max_output_size=300, soft_nms_sigma=0.5):
+    def _traditional_nms(self, boxes, mask_coef, scores, iou_threshold=0.5, score_threshold=0.15, max_class_output_size=100, max_output_size=300):
         num_classes = tf.shape(scores)[1]
 
         _num_coef = tf.shape(mask_coef)[1]
@@ -231,13 +231,12 @@ class Detect(object):
 
         for _cls in range(num_classes):
             cls_scores = scores[:, _cls]
-            selected_indices, selected_scores = tf.image.non_max_suppression_with_scores(
+            selected_indices = tf.image.non_max_suppression(
                 boxes, 
                 cls_scores, 
-                max_output_size=max_class_output_size, 
+                max_output_size=max_class_output_size,
                 iou_threshold=iou_threshold, 
-                score_threshold=score_threshold,
-                soft_nms_sigma=soft_nms_sigma)
+                score_threshold=score_threshold)
 
             _update_boxes = tf.gather(boxes, selected_indices)
             _num_boxes = tf.shape(_update_boxes)[0]

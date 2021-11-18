@@ -19,7 +19,8 @@ class Yolact(tf.keras.Model):
     def __init__(self, img_h, img_w, fpn_channels, num_class, num_mask, 
                  aspect_ratio, scales, use_dcn=False, 
                  base_model_trainable=False,
-                 dcn_trainable=True):
+                 dcn_trainable=True,
+                 use_mask_iou=False):
         super(Yolact, self).__init__()
         out = ['conv3_block4_out', 'conv4_block6_out', 'conv5_block3_out']
 
@@ -97,7 +98,8 @@ class Yolact(tf.keras.Model):
         # This implementation differs from the original used in yolact
         self.predictionHead = PredictionModule(256, len(aspect_ratio), 
                                                num_class, num_mask)
-        # self.fastMaskIoUNet = FastMaskIoUNet(num_class)
+        if use_mask_iou:
+            self.fastMaskIoUNet = FastMaskIoUNet(num_class)
 
         # post-processing for evaluation
         self.detect = Detect(num_class, max_output_size=300, 

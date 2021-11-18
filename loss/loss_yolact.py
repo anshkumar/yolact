@@ -3,26 +3,6 @@ import tensorflow_addons as tfa
 import time
 from utils import utils
 
-class RetinaNetBoxLoss(tf.losses.Loss):
-    """Implements Smooth L1 loss"""
-
-    def __init__(self, delta):
-        super(RetinaNetBoxLoss, self).__init__(
-            reduction="none", name="RetinaNetBoxLoss"
-        )
-        self._delta = delta
-
-    def call(self, y_true, y_pred):
-        difference = y_true - y_pred
-        absolute_difference = tf.abs(difference)
-        squared_difference = difference ** 2
-        loss = tf.where(
-            tf.less(absolute_difference, self._delta),
-            0.5 * squared_difference,
-            absolute_difference - 0.5,
-        )
-        return tf.reduce_sum(loss, axis=-1)
-
 class YOLACTLoss(object):
     def __init__(self, 
                  img_h,
@@ -112,7 +92,6 @@ class YOLACTLoss(object):
 
         # calculate the smoothL1(positive_pred, positive_gt) and return
         num_pos = tf.shape(gt_offset)[0]
-        # smoothl1loss = RetinaNetBoxLoss(delta=1.)
         smoothl1loss = tf.keras.losses.Huber(delta=1.)
         if tf.reduce_sum(tf.cast(num_pos, tf.float32)) > 0.0:
             loss_loc = smoothl1loss(gt_offset, pred_offset)
@@ -201,7 +180,6 @@ class YOLACTLoss(object):
             cce = tf.keras.losses.CategoricalCrossentropy(from_logits=True,
                 reduction=tf.keras.losses.Reduction.SUM)
             loss_conf = cce(target_labels, target_logits) / tf.reduce_sum(tf.cast(num_pos, tf.float32)+tf.cast(num_neg, tf.float32))
-            # loss_conf = tf.reduce_sum(tf.nn.softmax_cross_entropy_with_logits(target_labels, target_logits)) / tf.reduce_sum(tf.cast(num_pos, tf.float32))
         else:
             loss_conf = 0.0
         return loss_conf*self._loss_weight_cls
@@ -260,7 +238,8 @@ class YOLACTLoss(object):
             # mask assembly by linear combination
             mask_p = tf.linalg.matmul(self.proto_out[i], _pos_coef, transpose_a=False, 
                 transpose_b=True) # [proto_height, proto_width, num_pos]
-            
+            mask_p = tf.sigmoid(mask_p)
+
             # crop the pred (not real crop, zero out the area outside the 
             # gt box)
             if use_cropped_mask:
@@ -299,7 +278,6 @@ class YOLACTLoss(object):
                 reduction=tf.losses.Reduction.NONE)
             mask_loss = bce(_pos_mask_gt, _mask_p)
 
-            # mask_loss = tf.nn.sigmoid_cross_entropy_with_logits(pos_mask_gt, mask_p)
             mask_loss = tf.reduce_mean(mask_loss, 
                                         axis=(1,2)) 
 
@@ -357,7 +335,7 @@ class YOLACTLoss(object):
             num_samples = tf.shape(maskiou_t)[0]
             # TODO: train random sample (maskious_to_train)
 
-            maskiou_p = model.fastMaskIoUNet(maskiou_net_input)
+            maskiou_p = self.model.fastMaskIoUNet(maskiou_net_input)
 
             # Using index zero for class label.
             # Indices are K-dimensional. 
@@ -416,6 +394,7 @@ class YOLACTLoss(object):
             segment_gt = tf.transpose(segment_gt, perm=(1, 2, 0))
 
             segment_gt = tf.expand_dims(segment_gt, axis=-1)
+            cur_segment = tf.sigmoid(cur_segment)
             cur_segment = tf.expand_dims(cur_segment, axis=-1)
             cce = tf.keras.losses.BinaryCrossentropy(from_logits=False,
                 reduction=tf.keras.losses.Reduction.NONE)
