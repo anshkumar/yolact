@@ -42,6 +42,8 @@ flags.DEFINE_string('saved_models_dir', './saved_models',
                     'directory for exporting saved_models')
 flags.DEFINE_string('label_map', './label_map.pbtxt',
                     'path to label_map.pbtxt')
+flags.DEFINE_string('backbone', 'resnet50',
+                    'backbone to use while training.')
 flags.DEFINE_string('optimizer', 'SGD',
                     'Optimizer to use')
 flags.DEFINE_integer('train_iter', 1200000,
@@ -178,6 +180,7 @@ def main(argv):
       logging.info("DCN layer in the base model is NOT trainable.")
       dcn_trainable = False
 
+    logging.info("Using %s as backbone for training." % FLAGS.backbone)
     model = yolact.Yolact(
       img_h=FLAGS.img_h, 
       img_w=FLAGS.img_w,
@@ -189,7 +192,8 @@ def main(argv):
       use_dcn=FLAGS.use_dcn,
       base_model_trainable=FLAGS.base_model_trainable,
       dcn_trainable=dcn_trainable,
-      use_mask_iou=FLAGS.use_mask_iou)
+      use_mask_iou=FLAGS.use_mask_iou,
+      backbone=FLAGS.backbone)
 
     if FLAGS.model_quantization:
       logging.info("Quantization aware training")

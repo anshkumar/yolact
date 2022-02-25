@@ -38,7 +38,7 @@ def prepare_dataloader(img_h, img_w, feature_map_size, protonet_out_size, aspect
 
     dataset = dataset.shuffle(buffer_size=2048)
     dataset = dataset.map(map_func=parser, num_parallel_calls=tf.data.experimental.AUTOTUNE)
-    dataset = dataset.batch(batch_size)
+    dataset = dataset.batch(batch_size, drop_remainder=True)
     dataset = dataset.prefetch(buffer_size=tf.data.experimental.AUTOTUNE)
 
     return dataset

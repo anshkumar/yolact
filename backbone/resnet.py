@@ -10,15 +10,29 @@ from __future__ import absolute_import
 from __future__ import division
 from __future__ import print_function
 
-import tensorflow.compat.v2 as tf
 
-from keras import backend
-from keras.applications import imagenet_utils
-from keras.engine import training
-from keras.layers import VersionAwareLayers
-from keras.utils import data_utils
-from keras.utils import layer_utils
-from tensorflow.python.util.tf_export import keras_export
+import tensorflow as tf
+assert tf.__version__.startswith('2')
+if int(tf.__version__.split('.')[1]) >= 6:
+  # For tf >=2.6
+  import tensorflow.compat.v2 as tf
+
+  from keras import backend
+  from keras.applications import imagenet_utils
+  from keras.engine import training
+  from keras.layers import VersionAwareLayers
+  from keras.utils import data_utils
+  from keras.utils import layer_utils
+else:
+  # for tf <= 2.5
+  from tensorflow.python.keras import backend
+  from tensorflow.python.keras.applications import imagenet_utils
+  from tensorflow.python.keras.engine import training
+  from tensorflow.python.keras.layers import VersionAwareLayers
+  from tensorflow.python.keras.utils import data_utils
+  from tensorflow.python.keras.utils import layer_utils
+  from tensorflow.python.lib.io import file_io
+  from tensorflow.python.util.tf_export import keras_export
 
 try:
     from backbone import dcn_v2

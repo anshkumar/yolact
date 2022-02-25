@@ -99,7 +99,7 @@ class Parser(object):
         # matching anchors
         all_offsets, conf_gt, prior_max_box, prior_max_index = \
         self._anchor_instance.matching(
-            self._match_threshold, self._unmatched_threshold, boxes_norm, classes)
+            self._match_threshold, self._unmatched_threshold, boxes, classes)
 
         # number of object in training sample
         num_obj = tf.size(classes)

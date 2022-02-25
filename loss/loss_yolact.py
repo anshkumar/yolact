@@ -244,14 +244,14 @@ class YOLACTLoss(object):
             # gt box)
             if use_cropped_mask:
                 # _pos_prior_box.shape: (num_pos, 4)
-                # bboxes_for_cropping = tf.stack([
-                #     _pos_prior_box[:, 0]/self.img_h, 
-                #     _pos_prior_box[:, 1]/self.img_w,
-                #     _pos_prior_box[:, 2]/self.img_h,
-                #     _pos_prior_box[:, 3]/self.img_w
-                #     ], axis=-1)
-                # mask_p = utils.crop(mask_p, bboxes_for_cropping)
-                mask_p = utils.crop(mask_p, _pos_prior_box)  
+                bboxes_for_cropping = tf.stack([
+                    _pos_prior_box[:, 0]/self.img_h, 
+                    _pos_prior_box[:, 1]/self.img_w,
+                    _pos_prior_box[:, 2]/self.img_h,
+                    _pos_prior_box[:, 3]/self.img_w
+                    ], axis=-1)
+                mask_p = utils.crop(mask_p, bboxes_for_cropping)
+                # mask_p = utils.crop(mask_p, _pos_prior_box)  
                 # pos_mask_gt = utils.crop(pos_mask_gt, _pos_prior_box)
 
             # mask_p = tf.clip_by_value(mask_p, clip_value_min=0.0, 
@@ -261,10 +261,10 @@ class YOLACTLoss(object):
             # ROIAlign affect. 
 
             # Getting normalized boxes widths and height
-            # boxes_w = (_pos_prior_box[:, 3] - _pos_prior_box[:, 1])/self.img_w
-            # boxes_h = (_pos_prior_box[:, 2] - _pos_prior_box[:, 0])/self.img_h
-            boxes_w = (_pos_prior_box[:, 3] - _pos_prior_box[:, 1])
-            boxes_h = (_pos_prior_box[:, 2] - _pos_prior_box[:, 0])
+            boxes_w = (_pos_prior_box[:, 3] - _pos_prior_box[:, 1])/self.img_w
+            boxes_h = (_pos_prior_box[:, 2] - _pos_prior_box[:, 0])/self.img_h
+            # boxes_w = (_pos_prior_box[:, 3] - _pos_prior_box[:, 1])
+            # boxes_h = (_pos_prior_box[:, 2] - _pos_prior_box[:, 0])
 
             # Adding extra dimension as i/p and o/p shapes are different with 
             # "reduction" is set to None.

@@ -35,12 +35,12 @@ class Anchor(object):
             for j, i in product(range(int(f_size[0])), range(int(f_size[1]))):
                 # i,j are pixels values in feature map
                 # + 0.5 because priors are in center
-                x = (i + 0.5) / f_size[1] # normalize the pixel values
-                y = (j + 0.5) / f_size[0]
+                x = (i + 0.5) / f_size[1] * self.img_size_w # normalize the pixel values
+                y = (j + 0.5) / f_size[0] * self.img_size_h
                 for ars in aspect_ratio:
                     a = sqrt(ars)
-                    w = scale[idx] * a / self.img_size_w
-                    h = scale[idx] / a / self.img_size_h
+                    w = scale[idx] * a #/ self.img_size_w
+                    h = scale[idx] / a #/ self.img_size_h
                     # directly use point form here => [cx, cy, w, h]
                     prior_boxes += [x, y, w, h]
                     count_anchor += 1

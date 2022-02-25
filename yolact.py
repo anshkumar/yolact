@@ -17,29 +17,44 @@ class Yolact(tf.keras.Model):
     """
 
     def __init__(self, img_h, img_w, fpn_channels, num_class, num_mask, 
-                 aspect_ratio, scales, use_dcn=False, 
+                 aspect_ratio, scales, use_dcn=False, backbone='resnet50',
                  base_model_trainable=False,
                  dcn_trainable=True,
                  use_mask_iou=False):
         super(Yolact, self).__init__()
         out = ['conv3_block4_out', 'conv4_block6_out', 'conv5_block3_out']
-
+        self.backbone = backbone
         if not use_dcn:
-            base_model = tf.keras.applications.resnet50.ResNet50(
-                input_shape=(img_h,img_w,3),
-                include_top=False,
-                layers=tf.keras.layers,
-                weights='imagenet')
+            if self.backbone == 'resnet50':
+                base_model = tf.keras.applications.resnet50.ResNet50(
+                    input_shape=(img_h,img_w,3),
+                    include_top=False,
+                    layers=tf.keras.layers,
+                    weights='imagenet')
+            else:
+                base_model = tf.keras.applications.resnet.ResNet101(
+                    input_shape=(img_h,img_w,3),
+                    include_top=False,
+                    layers=tf.keras.layers,
+                    weights='imagenet')
 
             # Freeze the convolutional base
             base_model.trainable = base_model_trainable 
         else:
-            base_model = resnet.ResNet50(
-                input_shape=(img_h,img_w,3),
-                include_top=False,
-                layers=tf.keras.layers,
-                weights='imagenet',
-                dcn_layers=[False, True, True, True])
+            if self.backbone == 'resnet50':
+                base_model = resnet.ResNet50(
+                    input_shape=(img_h,img_w,3),
+                    include_top=False,
+                    layers=tf.keras.layers,
+                    weights='imagenet',
+                    dcn_layers=[False, True, True, True])
+            else:
+                base_model = resnet.ResNet101(
+                    input_shape=(img_h,img_w,3),
+                    include_top=False,
+                    layers=tf.keras.layers,
+                    weights='imagenet',
+                    dcn_layers=[False, True, True, True])
 
             # Freeze the convolutional base
             base_model.trainable = base_model_trainable 
@@ -112,7 +127,10 @@ class Yolact(tf.keras.Model):
         # backbone(ResNet + FPN)
         inputs = tf.cast(inputs, tf.float32)
         # inputs = inputs / 255.0
-        inputs = tf.keras.applications.resnet50.preprocess_input(inputs)
+        if self.backbone == 'resnet50':
+            inputs = tf.keras.applications.resnet50.preprocess_input(inputs)
+        else:
+            inputs = tf.keras.applications.resnet.preprocess_input(inputs)
 
         # https://www.tensorflow.org/tutorials/images/transfer_learning#\
         # important_note_about_batchnormalization_layers
