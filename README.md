@@ -115,9 +115,9 @@ bazel-bin/build_pip_pkg artifacts
 ```
 4. Pass `-use_dcn True` and `-use_mask_iou True` to train.py
 
-I've compiled [tensorflow_addons-0.11.2](tensorflow_addons/tensorflow_addons-0.11.2-cp36-cp36m-linux_x86_64.whl)(cuda 10.1, cudnn 7.6, tf 2.3.0) and [tensorflow_addons-0.13.0](tensorflow_addons/tensorflow_addons-0.13.0-cp36-cp36m-linux_x86_64.whl)(cuda 11.2, cudnn 8.2, tf 2.5.0) for python3.6.
+I've compiled [tensorflow_addons-0.11.2](tensorflow_addons/tensorflow_addons-0.11.2-cp36-cp36m-linux_x86_64.whl)(cuda 10.1, cudnn 7.6, tf 2.3.0), [tensorflow_addons-0.13.0](tensorflow_addons/tensorflow_addons-0.13.0-cp36-cp36m-linux_x86_64.whl)(cuda 11.2, cudnn 8.2, tf 2.5.0) and [tensorflow_addons-0.17.0](tensorflow_addons/tensorflow_addons-0.17.0.dev0-cp36-cp36m-linux_x86_64.whl)(cuda 11.6, cudnn 8.3, tf 2.6.2) for python3.6.
 
-Note: While compiling tensorflow addon for tf 2.5, change the header in `addons/tensorflow_addons/custom_ops/layers/cc/kernels/deformable_conv2d_op.h` from 
+Note: While compiling tensorflow addon for tf 2.5+, change the header in `addons/tensorflow_addons/custom_ops/layers/cc/kernels/deformable_conv2d_op.h` from 
 ```
 #include "tensorflow/core/kernels/batch_matmul_op_impl.h"
 ```
@@ -126,7 +126,11 @@ to this:
 #include "tensorflow/core/kernels/matmul_op_impl.h"
 ```
 
-Also, curently not able to compile with cuda 11.4.
+Also, with cuda 11.4+ where following error is coming:
+```
+status: Internal: too many resources requested for launch
+```
+need to reduce threads per block in `deformable_conv2d.patch`. For this change every occurrence of `config.thread_per_block` with `config.thread_per_block/2`.  
 
 ## Create TFRecord for training 
 Refer to the tensorflow object detection api for tfrecord creation. ([link](https://github.com/tensorflow/models/blob/master/research/object_detection/g3doc/using_your_own_dataset.md))
