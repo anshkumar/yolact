@@ -119,7 +119,7 @@ class Yolact(tf.keras.Model):
         # post-processing for evaluation
         self.detect = Detect(num_class, max_output_size=300, 
             per_class_max_output_size=100,
-            conf_thresh=0.15, nms_thresh=0.5)
+            conf_thresh=0.05, nms_thresh=0.5)
         self.max_output_size = 300
 
     @tf.function

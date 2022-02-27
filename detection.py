@@ -220,7 +220,7 @@ class Detect(object):
 
         return boxes
 
-    def _traditional_nms(self, boxes, mask_coef, scores, iou_threshold=0.5, score_threshold=0.15, max_class_output_size=100, max_output_size=300):
+    def _traditional_nms(self, boxes, mask_coef, scores, iou_threshold=0.5, score_threshold=0.05, max_class_output_size=100, max_output_size=300):
         num_classes = tf.shape(scores)[1]
 
         _num_coef = tf.shape(mask_coef)[1]
