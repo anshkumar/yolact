@@ -25,6 +25,12 @@ from google.protobuf import text_format
 from protos import string_int_label_map_pb2
 
 tf.random.set_seed(123)
+physical_devices = tf.config.list_physical_devices('GPU')
+try:
+        tf.config.experimental.set_memory_growth(physical_devices[0], True)
+except:
+        print("Invalid device or cannot modify virtual devices once initialized.")
+        pass
 
 FLAGS = flags.FLAGS
 
