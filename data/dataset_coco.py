@@ -14,7 +14,7 @@ from data import yolact_parser
 
 
 # Todo encapsulate it as a class, here is the place to get dataset(train, eval, test)
-def prepare_dataloader(img_h, img_w, feature_map_size, protonet_out_size, aspect_ratio, scale, tfrecord_dir, batch_size, subset="train"):
+def prepare_dataloader(img_h, img_w, feature_map_size, protonet_out_size, aspect_ratio, scale, tfrecord_dir, batch_size, label_map, subset="train"):
 
     anchorobj = anchor.Anchor(img_size_h=img_h,img_size_w=img_w,
                               feature_map_size=feature_map_size,
@@ -26,7 +26,8 @@ def prepare_dataloader(img_h, img_w, feature_map_size, protonet_out_size, aspect
                                   match_threshold=0.5,
                                   unmatched_threshold=0.5,
                                   mode=subset,
-                                  proto_output_size=[int(protonet_out_size[0]), int(protonet_out_size[1])])
+                                  proto_output_size=[int(protonet_out_size[0]), int(protonet_out_size[1])],
+                                  label_map=label_map)
     files = tf.io.matching_files(os.path.join(tfrecord_dir, "*.*"))
     num_shards = tf.cast(tf.shape(files)[0], tf.int64)
     shards = tf.data.Dataset.from_tensor_slices(files)

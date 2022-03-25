@@ -89,15 +89,15 @@ class Detect(object):
                 masks = tf.matmul(proto_p[b], tf.transpose(coef_thre))
                 masks = tf.sigmoid(masks) # [138, 138, NUM_BOX]
 
-                boxes = self._sanitize(boxes, width=img_shape[2], height=img_shape[1])
-                boxes = tf.stack([
-                    boxes[:, 0]/tf.cast(img_shape[1], tf.float32), 
-                    boxes[:, 1]/tf.cast(img_shape[2], tf.float32),
-                    boxes[:, 2]/tf.cast(img_shape[1], tf.float32),
-                    boxes[:, 3]/tf.cast(img_shape[2], tf.float32)
-                    ], axis=-1)
+                # boxes = self._sanitize(boxes, width=img_shape[2], height=img_shape[1])
+                #boxes = tf.stack([
+                #    boxes[:, 0]/tf.cast(img_shape[1], tf.float32), 
+                #    boxes[:, 1]/tf.cast(img_shape[2], tf.float32),
+                #    boxes[:, 2]/tf.cast(img_shape[1], tf.float32),
+                #    boxes[:, 3]/tf.cast(img_shape[2], tf.float32)
+                #    ], axis=-1)
 
-                # boxes = self._sanitize(boxes, width=1, height=1)
+                boxes = self._sanitize(boxes, width=1, height=1)
 
                 if use_cropped_mask:
                     masks = utils.crop(masks, boxes)

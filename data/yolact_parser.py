@@ -16,7 +16,8 @@ class Parser(object):
                  proto_output_size=[138,138],
                  skip_crow_during_training=True,
                  use_bfloat16=True,
-                 mode=None):
+                 mode=None,
+                 label_map=None):
 
         self._mode = mode
         self._skip_crowd_during_training = skip_crow_during_training
@@ -40,6 +41,21 @@ class Parser(object):
         self._use_bfloat16 = use_bfloat16
         self.count = 0
 
+        self.id_mapping = {}
+        for i, itm in zip(range(1, len(label_map)+1), label_map):
+            self.id_mapping[itm['id']] = i
+
+        # https://stackoverflow.com/a/59414295/4582711
+        init = tf.lookup.KeyValueTensorInitializer(
+            keys=list(self.id_mapping.keys()),
+            values=list(self.id_mapping.values()),
+            key_dtype=tf.int64,
+            value_dtype=tf.int64)
+        self.table_id_mapping = tf.lookup.StaticVocabularyTable(
+            init,
+            num_oov_buckets=1)
+
+
         # Data is parsed depending on the model.
         if mode == "train":
             self._parse_fn = partial(self._parse, augment=True)
@@ -57,6 +73,7 @@ class Parser(object):
 
     def _parse(self, data, augment):
         classes = data['gt_classes']
+        classes = self.table_id_mapping.lookup(classes)
         boxes = data['gt_bboxes']
         masks = data['gt_masks']
         image_height = data['height']
@@ -97,9 +114,12 @@ class Parser(object):
         boxes = boxes * [self._output_size_h, self._output_size_w, self._output_size_h , self._output_size_w]
         
         # matching anchors
+        # all_offsets, conf_gt, prior_max_box, prior_max_index = \
+        # self._anchor_instance.matching(
+        #     self._match_threshold, self._unmatched_threshold, boxes, classes)
         all_offsets, conf_gt, prior_max_box, prior_max_index = \
         self._anchor_instance.matching(
-            self._match_threshold, self._unmatched_threshold, boxes, classes)
+            self._match_threshold, self._unmatched_threshold, boxes_norm, classes)
 
         # number of object in training sample
         num_obj = tf.size(classes)

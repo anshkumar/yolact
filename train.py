@@ -25,6 +25,12 @@ from google.protobuf import text_format
 from protos import string_int_label_map_pb2
 
 tf.random.set_seed(123)
+physical_devices = tf.config.list_physical_devices('GPU')
+try:
+    tf.config.experimental.set_memory_growth(physical_devices[0], True)
+except:
+    print("Invalid device or cannot modify virtual devices once initialized.")
+    pass
 
 FLAGS = flags.FLAGS
 
@@ -32,13 +38,13 @@ flags.DEFINE_string('tfrecord_train_dir', './data/coco/train',
                     'directory of training tfrecord')
 flags.DEFINE_string('tfrecord_val_dir', './data/coco/val',
                     'directory of validation tfrecord')
-flags.DEFINE_string('checkpoints_dir', './checkpoints',
+flags.DEFINE_string('checkpoints_dir', '/home/sort/ved/yolact/checkpoints',
                     'directory for saving checkpoints')
 flags.DEFINE_string('pretrained_checkpoints', '',
                     'path to pretrained checkpoints')
-flags.DEFINE_string('logs_dir', './logs',
+flags.DEFINE_string('logs_dir', '/home/sort/ved/yolact/logs',
                     'directory for saving logs')
-flags.DEFINE_string('saved_models_dir', './saved_models',
+flags.DEFINE_string('saved_models_dir', '/home/sort/ved/yolact/saved_models',
                     'directory for exporting saved_models')
 flags.DEFINE_string('label_map', './label_map.pbtxt',
                     'path to label_map.pbtxt')
@@ -212,7 +218,9 @@ def main(argv):
       scale=[int(i) for i in FLAGS.scale],
       tfrecord_dir=FLAGS.tfrecord_train_dir,
       batch_size=FLAGS.batch_size,
-      subset='train')
+      label_map=_get_categories_list(FLAGS.label_map),
+      subset='train',
+      )
 
     logging.info("Creating the validation dataloader from: %s..." % \
       FLAGS.tfrecord_val_dir)
@@ -225,6 +233,7 @@ def main(argv):
       scale=[int(i) for i in FLAGS.scale],
       tfrecord_dir=FLAGS.tfrecord_val_dir,
       batch_size=1,
+      label_map=_get_categories_list(FLAGS.label_map),
       subset='val')
     
     # -----------------------------------------------------------------
@@ -264,11 +273,12 @@ def main(argv):
       #   [FLAGS.warmup_steps, int(0.35*FLAGS.train_iter), int(0.75*FLAGS.train_iter), int(0.875*FLAGS.train_iter), int(0.9375*FLAGS.train_iter)], 
       #   [FLAGS.warmup_lr, FLAGS.lr, 0.1*FLAGS.lr, 0.01*FLAGS.lr, 0.001*FLAGS.lr, 0.0001*FLAGS.lr])
       lr_schedule = learning_rate_schedule.Yolact_LearningRateSchedule(
-        warmup_steps=FLAGS.warmup_steps, 
-        warmup_lr=FLAGS.warmup_lr,
-        initial_lr=FLAGS.lr, 
-        total_steps=FLAGS.lr_total_steps)
+       warmup_steps=FLAGS.warmup_steps, 
+       warmup_lr=FLAGS.warmup_lr,
+       initial_lr=FLAGS.lr, 
+       total_steps=FLAGS.lr_total_steps)
       optimizer = tf.keras.optimizers.SGD(learning_rate=lr_schedule, momentum=FLAGS.momentum, clipnorm=10)
+      # optimizer = tf.keras.optimizers.SGD(learning_rate=lr_schedule, momentum=FLAGS.momentum)
     else:
       # wd = lambda: FLAGS.weight_decay * lr_schedule(lr_schedule.global_step)
       logging.info("Using Adam optimizer")
@@ -279,7 +289,7 @@ def main(argv):
         total_steps=FLAGS.lr_total_steps)
       optimizer = tfa.optimizers.AdamW(
         learning_rate=lr_schedule, 
-        weight_decay=FLAGS.weight_decay, clipnorm=10)
+        weight_decay=FLAGS.weight_decay)
     criterion = loss_yolact.YOLACTLoss(img_h= FLAGS.img_h, img_w=FLAGS.img_w,
                                         use_mask_iou=FLAGS.use_mask_iou)
     train_loss = tf.keras.metrics.Mean('train_loss', dtype=tf.float32)
@@ -294,6 +304,7 @@ def main(argv):
     v_mask = tf.keras.metrics.Mean('vmask_loss', dtype=tf.float32)
     v_mask_iou = tf.keras.metrics.Mean('vmask_iou_loss', dtype=tf.float32)
     v_seg = tf.keras.metrics.Mean('vseg_loss', dtype=tf.float32)
+    global_norm = tf.keras.metrics.Mean('global_norm', dtype=tf.float32)
 
     # -----------------------------------------------------------------
 
@@ -338,6 +349,11 @@ def main(argv):
     coco_evaluator = coco_evaluation.CocoMaskEvaluator(
       _get_categories_list(FLAGS.label_map))
 
+    id_map_det_to_coco = {}
+    for i, itm in zip(range(1, len(_get_categories_list(FLAGS.label_map))+1), 
+      _get_categories_list(FLAGS.label_map)):
+        id_map_det_to_coco[i] = itm['id']
+
     best_val = 1e10
     iterations = checkpoint.step.numpy()
 
@@ -360,6 +376,7 @@ def main(argv):
                 total_loss = criterion(model, output, labels, FLAGS.num_class+1, image)
 
             grads = tape.gradient(total_loss, model.trainable_variables)
+            global_norm.update_state(tf.linalg.global_norm(grads))
             optimizer.apply_gradients(zip(grads, model.trainable_variables))
             train_loss.update_state(total_loss)
 
@@ -388,10 +405,14 @@ def main(argv):
             tf.summary.scalar('Seg loss', 
               seg.result(), step=iterations)
 
+            tf.summary.scalar('Global Norm', 
+              global_norm.result(), step=iterations)
+
         if iterations and iterations % FLAGS.print_interval == 0:
             logging.info(
-                ("Iteration {}, LR: {}, Total Loss: {}, B: {},  C: {}, M: {}, "
-                "I: {}, S:{} ").format(
+                ("Iteration {}, LR: {}, Total Loss: {:.4f}, B: {:.4f},  "
+                  "C: {:.4f}, M: {:.4f}, I: {:.4f}, S:{:.4f}, "
+                  "global_norm:{:.4f} ").format(
                 iterations,
                 optimizer._decayed_lr(var_dtype=tf.float32),
                 train_loss.result(), 
@@ -399,7 +420,8 @@ def main(argv):
                 conf.result(),
                 mask.result(),
                 mask_iou.result(),
-                seg.result()
+                seg.result(),
+                global_norm.result()
             ))
 
         if iterations and iterations % FLAGS.save_interval == 0:
@@ -431,10 +453,12 @@ def main(argv):
                     _h = valid_image.shape[1]
                     _w = valid_image.shape[2]
                     
+                    # map_func = np.vectorize(lambda x: id_map_det_to_coco[x])
                     gt_num_box = valid_labels['num_obj'][0].numpy()
                     gt_boxes = valid_labels['boxes_norm'][0][:gt_num_box]
                     gt_boxes = gt_boxes.numpy()*np.array([_h,_w,_h,_w])
                     gt_classes = valid_labels['classes'][0][:gt_num_box].numpy()
+                    # gt_classes = map_func(gt_classes)
                     gt_masks = valid_labels['mask_target'][0][:gt_num_box].numpy()
 
                     gt_masked_image = np.zeros((gt_num_box, _h, _w))
@@ -460,6 +484,7 @@ def main(argv):
 
                     det_scores = output['detection_scores'][0][:det_num].numpy()
                     det_classes = output['detection_classes'][0][:det_num].numpy()
+                    # det_classes = map_func(det_classes)
 
                     det_masked_image = np.zeros((det_num, _h, _w))
                     for _b in range(det_num):
@@ -518,7 +543,8 @@ def main(argv):
                                         conf.result(),
                                         mask.result(),
                                         mask_iou.result(),
-                                        seg.result()))
+                                        seg.result(),
+                                        global_norm.result()))
             logging.info(valid_template.format(iterations + 1,
                                         valid_loss.result(),
                                         v_loc.result(),
@@ -557,6 +583,7 @@ def main(argv):
             mask.reset_states()
             mask_iou.reset_states()
             seg.reset_states()
+            global_norm.reset_states()
 
             valid_loss.reset_states()
             v_loc.reset_states()
