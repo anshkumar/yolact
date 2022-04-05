@@ -300,6 +300,30 @@ def main(argv):
     v_mask = tf.keras.metrics.Mean('vmask_loss', dtype=tf.float32)
     v_mask_iou = tf.keras.metrics.Mean('vmask_iou_loss', dtype=tf.float32)
     v_seg = tf.keras.metrics.Mean('vseg_loss', dtype=tf.float32)
+    global_norm = tf.keras.metrics.Mean('global_norm', dtype=tf.float32)
+    precision_mAP = tf.keras.metrics.Mean('precision_mAP', dtype=tf.float32)
+    precision_mAP_50IOU = tf.keras.metrics.Mean('precision_mAP_50IOU', 
+      dtype=tf.float32)
+    precision_mAP_75IOU = tf.keras.metrics.Mean('precision_mAP_75IOU', 
+      dtype=tf.float32)
+    precision_mAP_small = tf.keras.metrics.Mean('precision_mAP_small', 
+      dtype=tf.float32)
+    precision_mAP_medium = tf.keras.metrics.Mean('precision_mAP_medium', 
+      dtype=tf.float32)
+    precision_mAP_large = tf.keras.metrics.Mean('precision_mAP_large', 
+      dtype=tf.float32)
+    recall_AR_1 = tf.keras.metrics.Mean('recall_AR_1', 
+      dtype=tf.float32)
+    recall_AR_10 = tf.keras.metrics.Mean('recall_AR_10', 
+      dtype=tf.float32)
+    recall_AR_100 = tf.keras.metrics.Mean('recall_AR_100', 
+      dtype=tf.float32)
+    recall_AR_100_small = tf.keras.metrics.Mean('recall_AR_100_small', 
+      dtype=tf.float32)
+    recall_AR_100_medium = tf.keras.metrics.Mean('recall_AR_100_medium', 
+      dtype=tf.float32)
+    recall_AR_100_large = tf.keras.metrics.Mean('recall_AR_100_large', 
+      dtype=tf.float32)
 
     # -----------------------------------------------------------------
 
@@ -366,6 +390,7 @@ def main(argv):
                 total_loss = criterion(model, output, labels, FLAGS.num_class+1, image)
 
             grads = tape.gradient(total_loss, model.trainable_variables)
+            global_norm.update_state(tf.linalg.global_norm(grads))
             optimizer.apply_gradients(zip(grads, model.trainable_variables))
             train_loss.update_state(total_loss)
 
@@ -394,10 +419,14 @@ def main(argv):
             tf.summary.scalar('Seg loss', 
               seg.result(), step=iterations)
 
+            tf.summary.scalar('Global Norm', 
+              global_norm.result(), step=iterations)
+
         if iterations and iterations % FLAGS.print_interval == 0:
             logging.info(
-                ("Iteration {}, LR: {}, Total Loss: {}, B: {},  C: {}, M: {}, "
-                "I: {}, S:{} ").format(
+                ("Iteration {}, LR: {}, Total Loss: {:.4f}, B: {:.4f},  "
+                  "C: {:.4f}, M: {:.4f}, I: {:.4f}, S:{:.4f}, "
+                  "global_norm:{:.4f} ").format(
                 iterations,
                 optimizer._decayed_lr(var_dtype=tf.float32),
                 train_loss.result(), 
@@ -405,7 +434,8 @@ def main(argv):
                 conf.result(),
                 mask.result(),
                 mask_iou.result(),
-                seg.result()
+                seg.result(),
+                global_norm.result()
             ))
 
         if iterations and iterations % FLAGS.save_interval == 0:
@@ -490,6 +520,31 @@ def main(argv):
                 valid_iter += 1
 
             metrics = coco_evaluator.evaluate()
+            precision_mAP.update_state(
+              metrics['DetectionMasks_Precision/mAP'])
+            precision_mAP_50IOU.update_state(
+              metrics['DetectionMasks_Precision/mAP@.50IOU'])
+            precision_mAP_75IOU.update_state(
+              metrics['DetectionMasks_Precision/mAP@.75IOU'])
+            precision_mAP_small.update_state(
+              metrics['DetectionMasks_Precision/mAP (small)'])
+            precision_mAP_medium.update_state(
+              metrics['DetectionMasks_Precision/mAP (medium)'])
+            precision_mAP_large.update_state(
+              metrics['DetectionMasks_Precision/mAP (large)'])
+            recall_AR_1.update_state(
+              metrics['DetectionMasks_Recall/AR@1'])
+            recall_AR_10.update_state(
+              metrics['DetectionMasks_Recall/AR@10'])
+            recall_AR_100.update_state(
+              metrics['DetectionMasks_Recall/AR@100'])
+            recall_AR_100_small.update_state(
+              metrics['DetectionMasks_Recall/AR@100 (small)'])
+            recall_AR_100_medium.update_state(
+              metrics['DetectionMasks_Recall/AR@100 (medium)'])
+            recall_AR_100_large.update_state(
+              metrics['DetectionMasks_Recall/AR@100 (large)'])
+
             coco_evaluator.clear()
 
             with test_summary_writer.as_default():
@@ -511,10 +566,52 @@ def main(argv):
                 tf.summary.scalar('V Seg loss', 
                   v_seg.result(), step=iterations)
 
-            train_template = ("Iteration {}, Train Loss: {}, Loc Loss: {},  "
-              "Conf Loss: {}, Mask Loss: {}, Mask IOU Loss: {}, Seg Loss: {}")
+                tf.summary.scalar('Precision mAP', 
+                  precision_mAP.result(), step=iterations)
 
-            valid_template = ("Iteration {}, Valid Loss: {}, V Loc Loss: {},  "
+                tf.summary.scalar('Precision mAP@.50IOU', 
+                  precision_mAP_50IOU.result(), step=iterations)
+
+                tf.summary.scalar('precision mAP@.75IOU', 
+                  precision_mAP_75IOU.result(), step=iterations)
+
+                tf.summary.scalar('precision mAP (small)', 
+                  precision_mAP_small.result(), step=iterations)
+
+                tf.summary.scalar('precision mAP (medium)', 
+                  precision_mAP_medium.result(), step=iterations)
+
+                tf.summary.scalar('precision mAP (large)', 
+                  precision_mAP_large.result(), step=iterations)
+
+                tf.summary.scalar('recall AR@1', 
+                  recall_AR_1.result(), step=iterations)
+
+                tf.summary.scalar('recall AR@10', 
+                  recall_AR_10.result(), step=iterations)
+
+                tf.summary.scalar('recall AR@100', 
+                  recall_AR_100.result(), step=iterations)
+
+                tf.summary.scalar('recall AR@100 (small)', 
+                  recall_AR_100_small.result(), step=iterations)
+
+                tf.summary.scalar('recall AR@100 (medium)', 
+                  recall_AR_100_medium.result(), step=iterations)
+
+                tf.summary.scalar('recall AR@100 (large)', 
+                  recall_AR_100_large.result(), step=iterations)
+
+            train_template = ("Iteration {}, Train Loss: {}, Loc Loss: {},  "
+              "Conf Loss: {}, Mask Loss: {}, Mask IOU Loss: {}, Seg Loss: {}, "
+              "Global Norm: {}")
+
+            valid_template = ("Iteration {}, Precision mAP: {}, Precision "
+              "mAP@.50IOU: {}, precision mAP@.75IOU: {}, precision mAP (small)"
+              ": {}, precision mAP (medium): {}, precision mAP (large): {}, "
+              " recall AR@1: {}, recall AR@10: {}, recall AR@100: {}, recall "
+              "AR@100 (small): {}, recall AR@100 (medium): {}, recall AR@100 "
+              "(large): {}, Valid Loss: {}, V Loc Loss: {},  "
               "V Conf Loss: {}, V Mask Loss: {}, V Mask IOU Loss: {}, "
               "Seg Loss: {}")
 
@@ -524,8 +621,21 @@ def main(argv):
                                         conf.result(),
                                         mask.result(),
                                         mask_iou.result(),
-                                        seg.result()))
+                                        seg.result(),
+                                        global_norm.result()))
             logging.info(valid_template.format(iterations + 1,
+                                        precision_mAP.result(),
+                                        precision_mAP_50IOU.result(),
+                                        precision_mAP_75IOU.result(),
+                                        precision_mAP_small.result(),
+                                        precision_mAP_medium.result(),
+                                        precision_mAP_large.result(),
+                                        recall_AR_1.result(),
+                                        recall_AR_10.result(),
+                                        recall_AR_100.result(),
+                                        recall_AR_100_small.result(),
+                                        recall_AR_100_medium.result(),
+                                        recall_AR_100_large.result(),
                                         valid_loss.result(),
                                         v_loc.result(),
                                         v_conf.result(),
@@ -563,6 +673,7 @@ def main(argv):
             mask.reset_states()
             mask_iou.reset_states()
             seg.reset_states()
+            global_norm.reset_states()
 
             valid_loss.reset_states()
             v_loc.reset_states()
@@ -570,6 +681,18 @@ def main(argv):
             v_mask.reset_states()
             v_mask_iou.reset_states()
             v_seg.reset_states()
+            precision_mAP.reset_states()
+            precision_mAP_50IOU.reset_states()
+            precision_mAP_75IOU.reset_states()
+            precision_mAP_small.reset_states()
+            precision_mAP_medium.reset_states()
+            precision_mAP_large.reset_states()
+            recall_AR_1.reset_states()
+            recall_AR_10.reset_states()
+            recall_AR_100.reset_states()
+            recall_AR_100_small.reset_states()
+            recall_AR_100_medium.reset_states()
+            recall_AR_100_large.reset_states()
 
 
 if __name__ == '__main__':

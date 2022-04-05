@@ -116,7 +116,7 @@ class Detect(object):
         result = {'detection_boxes': detection_boxes,'detection_classes': detection_classes, 'detection_scores': detection_scores, 'detection_masks': detection_masks, 'num_detections': num_detections}
         return result
 
-    def _batch_decode(self, box_p, priors, include_variances=False):
+    def _batch_decode(self, box_p, priors, include_variances=True):
         # https://github.com/feiyuhuahuo/Yolact_minimal/blob/9299a0cf346e455d672fadd796ac748871ba85e4/utils/box_utils.py#L151
         """
         Decode predicted bbox coordinates using the scheme
@@ -150,7 +150,7 @@ class Detect(object):
         # [y_min, x_min, y_max, x_max]
         return tf.stack([boxes[:, :, 1], boxes[:, :, 0],boxes[:, :, 3], boxes[:, :, 2]], axis=-1)
 
-    def _decode(self, box_p, priors, include_variances=False):
+    def _decode(self, box_p, priors, include_variances=True):
         # https://github.com/feiyuhuahuo/Yolact_minimal/blob/9299a0cf346e455d672fadd796ac748871ba85e4/utils/box_utils.py#L151
         """
         Decode predicted bbox coordinates using the scheme

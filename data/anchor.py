@@ -53,7 +53,10 @@ class Anchor(object):
         output = tf.cast(output, tf.float32)
         return num_anchors, output
 
-    def _encode(self, map_loc, anchors, include_variances=False):
+    def _encode(self, map_loc, anchors, include_variances=True):
+        # For variance in priorbox layer:
+        # https://github.com/weiliu89/caffe/issues/155
+
         # center_gt = tf.map_fn(lambda x: map_to_center_form(x), map_loc)
         # center_anchors in [ymin, xmin, ymax, xmax ]
         # map_loc in [ymin, xmin, ymax, xmax ]
