@@ -401,6 +401,7 @@ def main(argv):
         seg.update_state(seg_loss)
 
         with train_summary_writer.as_default():
+          with tf.name_scope("loss_train"):
             tf.summary.scalar('Total loss', 
               train_loss.result(), step=iterations)
 
@@ -419,6 +420,7 @@ def main(argv):
             tf.summary.scalar('Seg loss', 
               seg.result(), step=iterations)
 
+          with tf.name_scope("norm"):
             tf.summary.scalar('Global Norm', 
               global_norm.result(), step=iterations)
 
@@ -548,6 +550,7 @@ def main(argv):
             coco_evaluator.clear()
 
             with test_summary_writer.as_default():
+              with tf.name_scope("loss_val"):
                 tf.summary.scalar('V Total loss', 
                   valid_loss.result(), step=iterations)
 
@@ -566,6 +569,7 @@ def main(argv):
                 tf.summary.scalar('V Seg loss', 
                   v_seg.result(), step=iterations)
 
+              with tf.name_scope("precision"):
                 tf.summary.scalar('Precision mAP', 
                   precision_mAP.result(), step=iterations)
 
@@ -584,6 +588,7 @@ def main(argv):
                 tf.summary.scalar('precision mAP (large)', 
                   precision_mAP_large.result(), step=iterations)
 
+              with tf.name_scope("recall"):
                 tf.summary.scalar('recall AR@1', 
                   recall_AR_1.result(), step=iterations)
 

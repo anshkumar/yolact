@@ -1497,34 +1497,78 @@ def random_augmentation(img, bboxes, masks, output_size, proto_output_size, clas
     # a_image, a_bboxes, a_masks = random_vertical_flip(img, bboxes, masks)
 
     if FLAGS[0] > 0.5:
-      a_image = random_adjust_brightness(a_image)
+      a_image = random_adjust_brightness(a_image, max_delta=0.12)
     if FLAGS[1] > 0.5:
-      a_image = random_adjust_contrast(a_image)
+      a_image = random_adjust_contrast(a_image, min_delta=0.5, max_delta=1.5)
     if FLAGS[2] > 0.5:
-      a_image = random_adjust_hue(a_image)
+      a_image = random_adjust_hue(a_image, max_delta=0.07)
     if FLAGS[3] > 0.5:
-      a_image = random_adjust_saturation(a_image)
+      a_image = random_adjust_saturation(a_image, min_delta=0.5, max_delta=1.5)
 
-    # if FLAGS[4] > 0.5:
-    #   (a_image, a_bboxes, a_classes, _, a_masks) = random_crop_image(
+    if FLAGS[4] > 0.5:
+      t_flag = tf.random.uniform([5], minval=0, maxval=1)
+      min_ious = (0.1, 0.3, 0.5, 0.7, 0.9)
+      if t_flag[0] > 0.5:
+          (a_image, a_bboxes, a_classes, _, a_masks) = random_crop_image(
+                 a_image,
+                 a_bboxes,
+                 a_classes,
+                 a_classes*0+1, # equal weights to all
+                 masks=a_masks,
+                 aspect_ratio_range=(0.5, 1.5),
+                 overlap_thresh=min_ious[0]
+                 )
+      elif t_flag[1] > 0.5:
+            (a_image, a_bboxes, a_classes, _, a_masks) = random_crop_image(
+                   a_image,
+                   a_bboxes,
+                   a_classes,
+                   a_classes*0+1, # equal weights to all
+                   masks=a_masks,
+                   aspect_ratio_range=(0.5, 1.5),
+                   overlap_thresh=min_ious[1]
+                   )
+      elif t_flag[2] > 0.5:
+            (a_image, a_bboxes, a_classes, _, a_masks) = random_crop_image(
+                   a_image,
+                   a_bboxes,
+                   a_classes,
+                   a_classes*0+1, # equal weights to all
+                   masks=a_masks,
+                   aspect_ratio_range=(0.5, 1.5),
+                   overlap_thresh=min_ious[2]
+                   )
+      elif t_flag[3] > 0.5:
+            (a_image, a_bboxes, a_classes, _, a_masks) = random_crop_image(
+                   a_image,
+                   a_bboxes,
+                   a_classes,
+                   a_classes*0+1, # equal weights to all
+                   masks=a_masks,
+                   aspect_ratio_range=(0.5, 1.5),
+                   overlap_thresh=min_ious[3]
+                   )
+      elif t_flag[4] > 0.5:
+            (a_image, a_bboxes, a_classes, _, a_masks) = random_crop_image(
+                   a_image,
+                   a_bboxes,
+                   a_classes,
+                   a_classes*0+1, # equal weights to all
+                   masks=a_masks,
+                   aspect_ratio_range=(0.5, 1.5),
+                   overlap_thresh=min_ious[4]
+                   )
+
+    # if FLAGS[5] > 0.5:
+    #   (a_image, a_bboxes, a_classes, _, a_masks) = random_square_crop_by_scale(
     #          a_image,
     #          a_bboxes,
     #          a_classes,
     #          a_classes*0+1, # equal weights to all
-    #          masks=a_masks)
-
-    # elif 
-    # 
-    if FLAGS[5] > 0.5:
-      (a_image, a_bboxes, a_classes, _, a_masks) = random_square_crop_by_scale(
-             a_image,
-             a_bboxes,
-             a_classes,
-             a_classes*0+1, # equal weights to all
-             masks=a_masks,
-             max_border=256,
-             scale_min=0.6,
-             scale_max=1.3)
+    #          masks=a_masks,
+    #          max_border=256,
+    #          scale_min=0.6,
+    #          scale_max=1.3)
 
     # return img, bboxes, masks, classes
     return a_image, a_bboxes, a_masks, a_classes
