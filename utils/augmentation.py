@@ -978,6 +978,235 @@ def _strict_random_crop_image(image,
 
   return tuple(result)
 
+def random_pad_image(image,
+                     boxes,
+                     masks=None,
+                     keypoints=None,
+                     densepose_surface_coords=None,
+                     min_image_size=None,
+                     max_image_size=None,
+                     pad_color=None,
+                     center_pad=False,
+                     seed=None,
+                     preprocess_vars_cache=None):
+  """Randomly pads the image.
+  This function randomly pads the image with zeros. The final size of the
+  padded image will be between min_image_size and max_image_size.
+  if min_image_size is smaller than the input image size, min_image_size will
+  be set to the input image size. The same for max_image_size. The input image
+  will be located at a uniformly random location inside the padded image.
+  The relative location of the boxes to the original image will remain the same.
+  Args:
+    image: rank 3 float32 tensor containing 1 image -> [height, width, channels]
+           with pixel values varying between [0, 1].
+    boxes: rank 2 float32 tensor containing the bounding boxes -> [N, 4].
+           Boxes are in normalized form meaning their coordinates vary
+           between [0, 1].
+           Each row is in the form of [ymin, xmin, ymax, xmax].
+    masks: (optional) rank 3 float32 tensor with shape
+           [N, height, width] containing instance masks. The masks
+           are of the same height, width as the input `image`.
+    keypoints: (optional) rank 3 float32 tensor with shape
+               [N, num_keypoints, 2]. The keypoints are in y-x normalized
+               coordinates.
+    densepose_surface_coords: (optional) rank 3 float32 tensor with shape
+                              [N, num_points, 4]. The DensePose coordinates are
+                              of the form (y, x, v, u) where (y, x) are the
+                              normalized image coordinates for a sampled point,
+                              and (v, u) is the surface coordinate for the part.
+    min_image_size: a tensor of size [min_height, min_width], type tf.int32.
+                    If passed as None, will be set to image size
+                    [height, width].
+    max_image_size: a tensor of size [max_height, max_width], type tf.int32.
+                    If passed as None, will be set to twice the
+                    image [height * 2, width * 2].
+    pad_color: padding color. A rank 1 tensor of [channels] with dtype=
+               tf.float32. if set as None, it will be set to average color of
+               the input image.
+    center_pad: whether the original image will be padded to the center, or
+                randomly padded (which is default).
+    seed: random seed.
+    preprocess_vars_cache: PreprocessorCache object that records previously
+                           performed augmentations. Updated in-place. If this
+                           function is called multiple times with the same
+                           non-null cache, it will perform deterministically.
+  Returns:
+    image: Image shape will be [new_height, new_width, channels].
+    boxes: boxes which is the same rank as input boxes. Boxes are in normalized
+           form.
+    if masks is not None, the function also returns:
+    masks: rank 3 float32 tensor with shape [N, new_height, new_width]
+    if keypoints is not None, the function also returns:
+    keypoints: rank 3 float32 tensor with shape [N, num_keypoints, 2]
+    if densepose_surface_coords is not None, the function also returns:
+    densepose_surface_coords: rank 3 float32 tensor with shape
+      [num_instances, num_points, 4]
+  """
+  if pad_color is None:
+    pad_color = tf.reduce_mean(image, axis=[0, 1])
+
+  image_shape = tf.shape(image)
+  image_height = image_shape[0]
+  image_width = image_shape[1]
+
+  if max_image_size is None:
+    max_image_size = tf.stack([image_height * 2, image_width * 2])
+  max_image_size = tf.maximum(max_image_size,
+                              tf.stack([image_height, image_width]))
+
+  if min_image_size is None:
+    min_image_size = tf.stack([image_height, image_width])
+  min_image_size = tf.maximum(min_image_size,
+                              tf.stack([image_height, image_width]))
+  target_height = tf.cond(
+      max_image_size[0] > min_image_size[0],
+      lambda: _random_integer(min_image_size[0], max_image_size[0], seed),
+      lambda: max_image_size[0])
+
+  target_width = tf.cond(
+      max_image_size[1] > min_image_size[1],
+      lambda: _random_integer(min_image_size[1], max_image_size[1], seed),
+      lambda: max_image_size[1])
+
+  offset_height = tf.cond(
+      target_height > image_height,
+      lambda: _random_integer(0, target_height - image_height, seed),
+      lambda: tf.constant(0, dtype=tf.int32))
+
+  offset_width = tf.cond(
+      target_width > image_width,
+      lambda: _random_integer(0, target_width - image_width, seed),
+      lambda: tf.constant(0, dtype=tf.int32))
+
+  if center_pad:
+    offset_height = tf.cast(tf.floor((target_height - image_height) / 2),
+                            tf.int32)
+    offset_width = tf.cast(tf.floor((target_width - image_width) / 2),
+                           tf.int32)
+
+  gen_func = lambda: (target_height, target_width, offset_height, offset_width)
+  params = _get_or_create_preprocess_rand_vars(
+      gen_func, 'pad_image',
+      preprocess_vars_cache)
+  target_height, target_width, offset_height, offset_width = params
+
+  new_image = tf.image.pad_to_bounding_box(
+      image,
+      offset_height=offset_height,
+      offset_width=offset_width,
+      target_height=target_height,
+      target_width=target_width)
+
+  # Setting color of the padded pixels
+  image_ones = tf.ones_like(image)
+  image_ones_padded = tf.image.pad_to_bounding_box(
+      image_ones,
+      offset_height=offset_height,
+      offset_width=offset_width,
+      target_height=target_height,
+      target_width=target_width)
+  image_color_padded = (1- image_ones_padded) * pad_color
+  new_image += image_color_padded
+
+  # setting boxes
+  new_window = tf.cast(
+      tf.stack([
+          -offset_height, -offset_width, target_height - offset_height,
+          target_width - offset_width
+      ]),
+      dtype=tf.float32)
+  new_window /= tf.cast(
+      tf.stack([image_height, image_width, image_height, image_width]),
+      dtype=tf.float32)
+  boxlist = box_list.BoxList(boxes)
+  new_boxlist = change_coordinate_frame(boxlist, new_window)
+  new_boxes = new_boxlist.get()
+
+  result = [new_image, new_boxes]
+
+  if masks is not None:
+    new_masks = tf.image.pad_to_bounding_box(
+        masks[:, :, :, tf.newaxis],
+        offset_height=offset_height,
+        offset_width=offset_width,
+        target_height=target_height,
+        target_width=target_width)[:, :, :, 0]
+    result.append(new_masks)
+
+  return tuple(result)
+
+
+def random_absolute_pad_image(image,
+                              boxes,
+                              masks=None,
+                              keypoints=None,
+                              densepose_surface_coords=None,
+                              max_height_padding=None,
+                              max_width_padding=None,
+                              pad_color=None,
+                              seed=None,
+                              preprocess_vars_cache=None):
+  """Randomly pads the image by small absolute amounts.
+  As random_pad_image above, but the padding is of size [0, max_height_padding]
+  or [0, max_width_padding] instead of padding to a fixed size of
+  max_height_padding for all images.
+  Args:
+    image: rank 3 float32 tensor containing 1 image -> [height, width, channels]
+           with pixel values varying between [0, 1].
+    boxes: rank 2 float32 tensor containing the bounding boxes -> [N, 4].
+           Boxes are in normalized form meaning their coordinates vary
+           between [0, 1].
+           Each row is in the form of [ymin, xmin, ymax, xmax].
+    masks: (optional) rank 3 float32 tensor with shape
+           [N, height, width] containing instance masks. The masks
+           are of the same height, width as the input `image`.
+    keypoints: (optional) rank 3 float32 tensor with shape
+               [N, num_keypoints, 2]. The keypoints are in y-x normalized
+               coordinates.
+    densepose_surface_coords: (optional) rank 3 float32 tensor with shape
+                              [N, num_points, 4]. The DensePose coordinates are
+                              of the form (y, x, v, u) where (y, x) are the
+                              normalized image coordinates for a sampled point,
+                              and (v, u) is the surface coordinate for the part.
+    max_height_padding: a scalar tf.int32 tensor denoting the maximum amount of
+                        height padding. The padding will be chosen uniformly at
+                        random from [0, max_height_padding).
+    max_width_padding: a scalar tf.int32 tensor denoting the maximum amount of
+                       width padding. The padding will be chosen uniformly at
+                       random from [0, max_width_padding).
+    pad_color: padding color. A rank 1 tensor of [3] with dtype=tf.float32.
+               if set as None, it will be set to average color of the input
+               image.
+    seed: random seed.
+    preprocess_vars_cache: PreprocessorCache object that records previously
+                           performed augmentations. Updated in-place. If this
+                           function is called multiple times with the same
+                           non-null cache, it will perform deterministically.
+  Returns:
+    image: Image shape will be [new_height, new_width, channels].
+    boxes: boxes which is the same rank as input boxes. Boxes are in normalized
+           form.
+    if masks is not None, the function also returns:
+    masks: rank 3 float32 tensor with shape [N, new_height, new_width]
+    if keypoints is not None, the function also returns:
+    keypoints: rank 3 float32 tensor with shape [N, num_keypoints, 2]
+  """
+  min_image_size = tf.shape(image)[:2]
+  max_image_size = [min_image_size[0] + tf.cast(max_height_padding, dtype=tf.int32), 
+                    min_image_size[1] + tf.cast(max_width_padding, dtype=tf.int32)]
+  max_image_size = tf.squeeze(max_image_size)
+  return random_pad_image(
+      image,
+      boxes,
+      masks=masks,
+      keypoints=keypoints,
+      densepose_surface_coords=densepose_surface_coords,
+      min_image_size=min_image_size,
+      max_image_size=max_image_size,
+      pad_color=pad_color,
+      seed=seed,
+      preprocess_vars_cache=preprocess_vars_cache)
+
 def random_crop_image(image,
                       boxes,
                       labels,
@@ -1116,7 +1345,7 @@ def random_crop_image(image,
   else:
     generator_func = functools.partial(tf.random_uniform, [], seed=seed)
     do_a_crop_random = _get_or_create_preprocess_rand_vars(
-        generator_func, preprocessor_cache.PreprocessorCache.CROP_IMAGE,
+        generator_func, 'crop_image',
         preprocess_vars_cache)
     do_a_crop_random = tf.greater(do_a_crop_random, random_coef)
 
@@ -1481,34 +1710,150 @@ def random_adjust_saturation(image,
   image = _augment_only_rgb_channels(image, _adjust_saturation)
   return image
 
-def random_augmentation(img, bboxes, masks, output_size, proto_output_size, classes):
-    # generate random
-    FLAGS = tf.random.uniform([6], minval=0, maxval=1)
-    # FLAG_ROTATE = FLAGS[3]
+def convertColor(image, current='RGB', transform='HSV'):
+    image = tf.cast(image, tf.float32)
+    if current == 'RGB' and transform == 'HSV':
+        image = tf.image.rgb_to_hsv(image)
+    elif current == 'HSV' and transform == 'RGB':
+        image =  tf.image.hsv_to_rgb (image)
+    else:
+        raise NotImplementedError
+    image = tf.cast(image, tf.uint8)
+    return image
 
-    # if FLAG_ROTATE > 0.75:
+def combined_static_and_dynamic_shape(tensor):
+  """Returns a list containing static and dynamic values for the dimensions.
+  Returns a list of static and dynamic values for shape dimensions. This is
+  useful to preserve static shapes when available in reshape operation.
+  Args:
+    tensor: A tensor of any type.
+  Returns:
+    A list of size tensor.shape.ndims containing integers or a scalar tensor.
+  """
+  static_tensor_shape = tensor.shape.as_list()
+  dynamic_tensor_shape = tf.shape(tensor)
+  combined_shape = []
+  for index, dim in enumerate(static_tensor_shape):
+    if dim is not None:
+      combined_shape.append(dim)
+    else:
+      combined_shape.append(dynamic_tensor_shape[index])
+  return combined_shape
+
+def resize_image(image,
+                 masks=None,
+                 new_height=600,
+                 new_width=1024,
+                 method=tf.image.ResizeMethod.BILINEAR,
+                 align_corners=False):
+  """Resizes images to the given height and width.
+  Args:
+    image: A 3D tensor of shape [height, width, channels]
+    masks: (optional) rank 3 float32 tensor with shape
+           [num_instances, height, width] containing instance masks.
+    new_height: (optional) (scalar) desired height of the image.
+    new_width: (optional) (scalar) desired width of the image.
+    method: (optional) interpolation method used in resizing. Defaults to
+            BILINEAR.
+    align_corners: bool. If true, exactly align all 4 corners of the input
+                   and output. Defaults to False.
+  Returns:
+    Note that the position of the resized_image_shape changes based on whether
+    masks are present.
+    resized_image: A tensor of size [new_height, new_width, channels].
+    resized_masks: If masks is not None, also outputs masks. A 3D tensor of
+      shape [num_instances, new_height, new_width]
+    resized_image_shape: A 1D tensor of shape [3] containing the shape of the
+      resized image.
+  """
+  new_image = tf.image.resize(
+      image, tf.stack([new_height, new_width]),
+      method=method)
+  image_shape = combined_static_and_dynamic_shape(image)
+  result = [new_image]
+  if masks is not None:
+    num_instances = tf.shape(masks)[0]
+    new_size = tf.stack([new_height, new_width])
+    def resize_masks_branch():
+      new_masks = tf.expand_dims(masks, 3)
+      new_masks =  tf.compat.v1.image.resize_nearest_neighbor (
+          new_masks, new_size, align_corners=align_corners)
+      new_masks = tf.squeeze(new_masks, axis=3)
+      return new_masks
+
+    def reshape_masks_branch():
+      # The shape function will be computed for both branches of the
+      # condition, regardless of which branch is actually taken. Make sure
+      # that we don't trigger an assertion in the shape function when trying
+      # to reshape a non empty tensor into an empty one.
+      new_masks = tf.reshape(masks, [-1, new_size[0], new_size[1]])
+      return new_masks
+
+    masks = tf.cond(num_instances > 0, resize_masks_branch,
+                    reshape_masks_branch)
+    result.append(masks)
+
+  result.append(tf.stack([new_height, new_width, image_shape[2]]))
+  return result
+
+def random_augmentation(images, bboxes, masks, output_size, proto_output_size, classes):
+    a_image = images
+    a_bboxes = bboxes
+    a_classes = classes
+    a_masks = masks
+    
     #   rand_angle = tf.random.uniform([1], minval=0, maxval=360)[0]
     #   img, bboxes, masks = rotate_with_bboxes(img, masks, bboxes, rand_angle)
-
-    a_image, a_bboxes, a_masks = random_horizontal_flip(img, bboxes, masks, 123)
-    a_classes = classes
-
     # a_image, a_bboxes, a_masks = random_rotation90(img, bboxes, masks)
     # a_image, a_bboxes, a_masks = random_vertical_flip(img, bboxes, masks)
 
-    if FLAGS[0] > 0.5:
+    if tf.random.uniform([1], minval=0, maxval=2, dtype=tf.int32) == 1:
       a_image = random_adjust_brightness(a_image, max_delta=0.12)
-    if FLAGS[1] > 0.5:
-      a_image = random_adjust_contrast(a_image, min_delta=0.5, max_delta=1.5)
-    if FLAGS[2] > 0.5:
-      a_image = random_adjust_hue(a_image, max_delta=0.07)
-    if FLAGS[3] > 0.5:
-      a_image = random_adjust_saturation(a_image, min_delta=0.5, max_delta=1.5)
 
-    if FLAGS[4] > 0.5:
-      t_flag = tf.random.uniform([5], minval=0, maxval=1)
-      min_ious = (0.1, 0.3, 0.5, 0.7, 0.9)
-      if t_flag[0] > 0.5:
+    if tf.random.uniform([1], minval=0, maxval=2, dtype=tf.int32) == 1:
+      if tf.random.uniform([1], minval=0, maxval=2, dtype=tf.int32) == 1:
+        a_image = random_adjust_contrast(a_image, min_delta=0.5, max_delta=1.5)
+
+      a_image = convertColor(a_image, current='RGB', transform='HSV')
+      if tf.random.uniform([1], minval=0, maxval=2, dtype=tf.int32) == 1:
+        a_image = random_adjust_saturation(a_image, min_delta=0.5, max_delta=1.5)
+
+      if tf.random.uniform([1], minval=0, maxval=2, dtype=tf.int32) == 1:
+        a_image = random_adjust_hue(a_image, max_delta=0.07)
+
+      a_image = convertColor(a_image, current='HSV', transform='RGB')
+    else:
+      a_image = convertColor(a_image, current='RGB', transform='HSV')
+      if tf.random.uniform([1], minval=0, maxval=2, dtype=tf.int32) == 1:
+        a_image = random_adjust_saturation(a_image, min_delta=0.5, max_delta=1.5)
+
+      if tf.random.uniform([1], minval=0, maxval=2, dtype=tf.int32) == 1:
+        a_image = random_adjust_hue(a_image, max_delta=0.07)
+      a_image = convertColor(a_image, current='HSV', transform='RGB')
+
+      if tf.random.uniform([1], minval=0, maxval=2, dtype=tf.int32) == 1:
+        a_image = random_adjust_contrast(a_image, min_delta=0.5, max_delta=1.5)
+        
+    if tf.random.uniform([1], minval=0, maxval=2, dtype=tf.int32) == 1:
+      ratio = tf.random.uniform([1], minval=1, maxval=4)
+      max_height_padding, max_width_padding = output_size
+      max_height_padding = tf.cast(max_height_padding, tf.float32)*ratio
+      max_width_padding = tf.cast(max_width_padding, tf.float32)*ratio
+      a_image, a_bboxes, a_masks = random_absolute_pad_image(a_image, a_bboxes, a_masks, max_height_padding=max_height_padding, max_width_padding=max_width_padding)
+
+    t_flag = tf.random.uniform([5], minval=0, maxval=1)
+    min_ious = (0.1, 0.3, 0.5, 0.7, 0.9)
+    if t_flag[0] > 0.5:
+        (a_image, a_bboxes, a_classes, _, a_masks) = random_crop_image(
+               a_image,
+               a_bboxes,
+               a_classes,
+               a_classes*0+1, # equal weights to all
+               masks=a_masks,
+               aspect_ratio_range=(0.5, 1.5),
+               overlap_thresh=min_ious[0]
+               )
+    elif t_flag[1] > 0.5:
           (a_image, a_bboxes, a_classes, _, a_masks) = random_crop_image(
                  a_image,
                  a_bboxes,
@@ -1516,48 +1861,45 @@ def random_augmentation(img, bboxes, masks, output_size, proto_output_size, clas
                  a_classes*0+1, # equal weights to all
                  masks=a_masks,
                  aspect_ratio_range=(0.5, 1.5),
-                 overlap_thresh=min_ious[0]
+                 overlap_thresh=min_ious[1]
                  )
-      elif t_flag[1] > 0.5:
-            (a_image, a_bboxes, a_classes, _, a_masks) = random_crop_image(
-                   a_image,
-                   a_bboxes,
-                   a_classes,
-                   a_classes*0+1, # equal weights to all
-                   masks=a_masks,
-                   aspect_ratio_range=(0.5, 1.5),
-                   overlap_thresh=min_ious[1]
-                   )
-      elif t_flag[2] > 0.5:
-            (a_image, a_bboxes, a_classes, _, a_masks) = random_crop_image(
-                   a_image,
-                   a_bboxes,
-                   a_classes,
-                   a_classes*0+1, # equal weights to all
-                   masks=a_masks,
-                   aspect_ratio_range=(0.5, 1.5),
-                   overlap_thresh=min_ious[2]
-                   )
-      elif t_flag[3] > 0.5:
-            (a_image, a_bboxes, a_classes, _, a_masks) = random_crop_image(
-                   a_image,
-                   a_bboxes,
-                   a_classes,
-                   a_classes*0+1, # equal weights to all
-                   masks=a_masks,
-                   aspect_ratio_range=(0.5, 1.5),
-                   overlap_thresh=min_ious[3]
-                   )
-      elif t_flag[4] > 0.5:
-            (a_image, a_bboxes, a_classes, _, a_masks) = random_crop_image(
-                   a_image,
-                   a_bboxes,
-                   a_classes,
-                   a_classes*0+1, # equal weights to all
-                   masks=a_masks,
-                   aspect_ratio_range=(0.5, 1.5),
-                   overlap_thresh=min_ious[4]
-                   )
+    elif t_flag[2] > 0.5:
+          (a_image, a_bboxes, a_classes, _, a_masks) = random_crop_image(
+                 a_image,
+                 a_bboxes,
+                 a_classes,
+                 a_classes*0+1, # equal weights to all
+                 masks=a_masks,
+                 aspect_ratio_range=(0.5, 1.5),
+                 overlap_thresh=min_ious[2]
+                 )
+    elif t_flag[3] > 0.5:
+          (a_image, a_bboxes, a_classes, _, a_masks) = random_crop_image(
+                 a_image,
+                 a_bboxes,
+                 a_classes,
+                 a_classes*0+1, # equal weights to all
+                 masks=a_masks,
+                 aspect_ratio_range=(0.5, 1.5),
+                 overlap_thresh=min_ious[3]
+                 )
+    elif t_flag[4] > 0.5:
+          (a_image, a_bboxes, a_classes, _, a_masks) = random_crop_image(
+                 a_image,
+                 a_bboxes,
+                 a_classes,
+                 a_classes*0+1, # equal weights to all
+                 masks=a_masks,
+                 aspect_ratio_range=(0.5, 1.5),
+                 overlap_thresh=min_ious[4]
+                 )
+
+    a_image, a_bboxes, a_masks = random_horizontal_flip(a_image, a_bboxes, a_masks, 123)
+
+    a_image, a_masks, _ = resize_image(a_image, a_masks, new_height=output_size[0], new_width=output_size[1])
+    img_h = tf.cast(tf.shape(a_image)[0], tf.float32)
+    img_w = tf.cast(tf.shape(a_image)[1], tf.float32)
+    a_bboxes = tf.stack([a_bboxes[:, 0]*output_size[0]/img_h, a_bboxes[:, 1]*output_size[1]/img_w, a_bboxes[:,2]*output_size[0]/img_h, a_bboxes[:,3]*output_size[1]/img_w], axis=1)
 
     # if FLAGS[5] > 0.5:
     #   (a_image, a_bboxes, a_classes, _, a_masks) = random_square_crop_by_scale(
