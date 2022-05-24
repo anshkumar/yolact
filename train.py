@@ -266,14 +266,14 @@ def main(argv):
     logging.info("Initiate the Optimizer and Loss function...")
     if FLAGS.optimizer == 'SGD':
       logging.info("Using SGD optimizer")
-      # lr_schedule = tf.optimizers.schedules.PiecewiseConstantDecay(
-      #   [FLAGS.warmup_steps, int(0.35*FLAGS.train_iter), int(0.75*FLAGS.train_iter), int(0.875*FLAGS.train_iter), int(0.9375*FLAGS.train_iter)], 
-      #   [FLAGS.warmup_lr, FLAGS.lr, 0.1*FLAGS.lr, 0.01*FLAGS.lr, 0.001*FLAGS.lr, 0.0001*FLAGS.lr])
-      lr_schedule = learning_rate_schedule.Yolact_LearningRateSchedule(
-       warmup_steps=FLAGS.warmup_steps, 
-       warmup_lr=FLAGS.warmup_lr,
-       initial_lr=FLAGS.lr, 
-       total_steps=FLAGS.lr_total_steps)
+      lr_schedule = tf.optimizers.schedules.PiecewiseConstantDecay(
+         [FLAGS.warmup_steps, int(0.35*FLAGS.train_iter), int(0.75*FLAGS.train_iter), int(0.875*FLAGS.train_iter), int(0.9375*FLAGS.train_iter)], 
+         [FLAGS.warmup_lr, FLAGS.lr, 0.1*FLAGS.lr, 0.01*FLAGS.lr, 0.001*FLAGS.lr, 0.0001*FLAGS.lr])
+      #lr_schedule = learning_rate_schedule.Yolact_LearningRateSchedule(
+      # warmup_steps=FLAGS.warmup_steps, 
+      # warmup_lr=FLAGS.warmup_lr,
+      # initial_lr=FLAGS.lr, 
+      # total_steps=FLAGS.lr_total_steps)
       optimizer = tf.keras.optimizers.SGD(learning_rate=lr_schedule, momentum=FLAGS.momentum, clipnorm=10)
     else:
       # wd = lambda: FLAGS.weight_decay * lr_schedule(lr_schedule.global_step)

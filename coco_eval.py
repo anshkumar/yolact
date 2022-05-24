@@ -120,7 +120,7 @@ def main(argv):
             _h = image_org.shape[0]
             _w = image_org.shape[1]
 
-            det_num = np.count_nonzero(output['detection_scores'][0].numpy()> 0.15)
+            det_num = np.count_nonzero(output['detection_scores'][0].numpy()> 0.05)
             det_boxes = output['detection_boxes'][0][:det_num]
             det_boxes = det_boxes.numpy()*np.array([_h,_w,_h,_w])
             det_masks = output['detection_masks'][0][:det_num].numpy()

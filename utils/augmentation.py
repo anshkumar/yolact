@@ -1814,22 +1814,22 @@ def random_augmentation(images, bboxes, masks, output_size, proto_output_size, c
       if tf.random.uniform([1], minval=0, maxval=2, dtype=tf.int32) == 1:
         a_image = random_adjust_contrast(a_image, min_delta=0.5, max_delta=1.5)
 
-      a_image = convertColor(a_image, current='RGB', transform='HSV')
+      # a_image = convertColor(a_image, current='RGB', transform='HSV')
       if tf.random.uniform([1], minval=0, maxval=2, dtype=tf.int32) == 1:
         a_image = random_adjust_saturation(a_image, min_delta=0.5, max_delta=1.5)
 
       if tf.random.uniform([1], minval=0, maxval=2, dtype=tf.int32) == 1:
         a_image = random_adjust_hue(a_image, max_delta=0.07)
 
-      a_image = convertColor(a_image, current='HSV', transform='RGB')
+      # a_image = convertColor(a_image, current='HSV', transform='RGB')
     else:
-      a_image = convertColor(a_image, current='RGB', transform='HSV')
+      # a_image = convertColor(a_image, current='RGB', transform='HSV')
       if tf.random.uniform([1], minval=0, maxval=2, dtype=tf.int32) == 1:
         a_image = random_adjust_saturation(a_image, min_delta=0.5, max_delta=1.5)
 
       if tf.random.uniform([1], minval=0, maxval=2, dtype=tf.int32) == 1:
         a_image = random_adjust_hue(a_image, max_delta=0.07)
-      a_image = convertColor(a_image, current='HSV', transform='RGB')
+      # a_image = convertColor(a_image, current='HSV', transform='RGB')
 
       if tf.random.uniform([1], minval=0, maxval=2, dtype=tf.int32) == 1:
         a_image = random_adjust_contrast(a_image, min_delta=0.5, max_delta=1.5)
@@ -1841,19 +1841,10 @@ def random_augmentation(images, bboxes, masks, output_size, proto_output_size, c
       max_width_padding = tf.cast(max_width_padding, tf.float32)*ratio
       a_image, a_bboxes, a_masks = random_absolute_pad_image(a_image, a_bboxes, a_masks, max_height_padding=max_height_padding, max_width_padding=max_width_padding)
 
-    t_flag = tf.random.uniform([5], minval=0, maxval=1)
-    min_ious = (0.1, 0.3, 0.5, 0.7, 0.9)
-    if t_flag[0] > 0.5:
-        (a_image, a_bboxes, a_classes, _, a_masks) = random_crop_image(
-               a_image,
-               a_bboxes,
-               a_classes,
-               a_classes*0+1, # equal weights to all
-               masks=a_masks,
-               aspect_ratio_range=(0.5, 1.5),
-               overlap_thresh=min_ious[0]
-               )
-    elif t_flag[1] > 0.5:
+    if tf.random.uniform([1], minval=0, maxval=2, dtype=tf.int32) == 1:
+      t_flag = tf.random.uniform([5], minval=0, maxval=1)
+      min_ious = (0.1, 0.3, 0.5, 0.7, 0.9)
+      if t_flag[0] > 0.5:
           (a_image, a_bboxes, a_classes, _, a_masks) = random_crop_image(
                  a_image,
                  a_bboxes,
@@ -1861,38 +1852,48 @@ def random_augmentation(images, bboxes, masks, output_size, proto_output_size, c
                  a_classes*0+1, # equal weights to all
                  masks=a_masks,
                  aspect_ratio_range=(0.5, 1.5),
-                 overlap_thresh=min_ious[1]
+                 overlap_thresh=min_ious[0]
                  )
-    elif t_flag[2] > 0.5:
-          (a_image, a_bboxes, a_classes, _, a_masks) = random_crop_image(
-                 a_image,
-                 a_bboxes,
-                 a_classes,
-                 a_classes*0+1, # equal weights to all
-                 masks=a_masks,
-                 aspect_ratio_range=(0.5, 1.5),
-                 overlap_thresh=min_ious[2]
-                 )
-    elif t_flag[3] > 0.5:
-          (a_image, a_bboxes, a_classes, _, a_masks) = random_crop_image(
-                 a_image,
-                 a_bboxes,
-                 a_classes,
-                 a_classes*0+1, # equal weights to all
-                 masks=a_masks,
-                 aspect_ratio_range=(0.5, 1.5),
-                 overlap_thresh=min_ious[3]
-                 )
-    elif t_flag[4] > 0.5:
-          (a_image, a_bboxes, a_classes, _, a_masks) = random_crop_image(
-                 a_image,
-                 a_bboxes,
-                 a_classes,
-                 a_classes*0+1, # equal weights to all
-                 masks=a_masks,
-                 aspect_ratio_range=(0.5, 1.5),
-                 overlap_thresh=min_ious[4]
-                 )
+      elif t_flag[1] > 0.5:
+            (a_image, a_bboxes, a_classes, _, a_masks) = random_crop_image(
+                   a_image,
+                   a_bboxes,
+                   a_classes,
+                   a_classes*0+1, # equal weights to all
+                   masks=a_masks,
+                   aspect_ratio_range=(0.5, 1.5),
+                   overlap_thresh=min_ious[1]
+                   )
+      elif t_flag[2] > 0.5:
+            (a_image, a_bboxes, a_classes, _, a_masks) = random_crop_image(
+                   a_image,
+                   a_bboxes,
+                   a_classes,
+                   a_classes*0+1, # equal weights to all
+                   masks=a_masks,
+                   aspect_ratio_range=(0.5, 1.5),
+                   overlap_thresh=min_ious[2]
+                   )
+      elif t_flag[3] > 0.5:
+            (a_image, a_bboxes, a_classes, _, a_masks) = random_crop_image(
+                   a_image,
+                   a_bboxes,
+                   a_classes,
+                   a_classes*0+1, # equal weights to all
+                   masks=a_masks,
+                   aspect_ratio_range=(0.5, 1.5),
+                   overlap_thresh=min_ious[3]
+                   )
+      elif t_flag[4] > 0.5:
+            (a_image, a_bboxes, a_classes, _, a_masks) = random_crop_image(
+                   a_image,
+                   a_bboxes,
+                   a_classes,
+                   a_classes*0+1, # equal weights to all
+                   masks=a_masks,
+                   aspect_ratio_range=(0.5, 1.5),
+                   overlap_thresh=min_ious[4]
+                   )
 
     a_image, a_bboxes, a_masks = random_horizontal_flip(a_image, a_bboxes, a_masks, 123)
 
@@ -1900,6 +1901,12 @@ def random_augmentation(images, bboxes, masks, output_size, proto_output_size, c
     img_h = tf.cast(tf.shape(a_image)[0], tf.float32)
     img_w = tf.cast(tf.shape(a_image)[1], tf.float32)
     a_bboxes = tf.stack([a_bboxes[:, 0]*output_size[0]/img_h, a_bboxes[:, 1]*output_size[1]/img_w, a_bboxes[:,2]*output_size[0]/img_h, a_bboxes[:,3]*output_size[1]/img_w], axis=1)
+    _h = a_bboxes[:, 2] - a_bboxes[:, 0]
+    _w = a_bboxes[:, 3] - a_bboxes[:, 1]
+    keep = tf.where( tf.math.logical_and (_h > 8/output_size[0], _w > 8/output_size[1]))
+    a_bboxes = tf.gather_nd(a_bboxes, keep)
+    a_masks = tf.gather_nd(a_masks, keep)
+    a_classes = tf.gather_nd(a_classes, keep)
 
     # if FLAGS[5] > 0.5:
     #   (a_image, a_bboxes, a_classes, _, a_masks) = random_square_crop_by_scale(
