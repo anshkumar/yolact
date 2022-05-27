@@ -21,7 +21,7 @@ class Detect(object):
         self.max_output_size = 300
         self.per_class_max_output_size = 100
 
-    def __call__(self, net_outs, img_shape, trad_nms=True, use_cropped_mask=True):
+    def __call__(self, net_outs, img_shape, trad_nms=False, use_cropped_mask=True):
         """
         Args:
              pred_offset: (tensor) Loc preds from loc layers
@@ -76,13 +76,13 @@ class Detect(object):
             raw_anchors = tf.boolean_mask(anchors, class_p_max[b] > self.conf_thresh)
 
             # decode only selected boxes
-            boxes = self._decode(raw_boxes, raw_anchors)  # [27429, 4]
+            boxes = utils._decode(raw_boxes, raw_anchors)  # [27429, 4]
 
-            if tf.size(class_thre) != 0:
+            if tf.size(class_thre) > 0:
                 if not trad_nms:
-                    boxes, coef_thre, class_ids, class_thre = _fast_nms(boxes, coef_thre, class_thre)
+                    boxes, coef_thre, class_ids, class_thre = self._cc_fast_nms(boxes, coef_thre, class_thre)
                 else:
-                    boxes, coef_thre, class_ids, class_thre = self._traditional_nms(boxes, coef_thre, class_thre, score_threshold=self.conf_thresh, iou_threshold=self.nms_thresh, max_class_output_size=self.per_class_max_output_size)
+                    boxes, coef_thre, class_ids, class_thre = self._traditional_nms_v2(boxes, coef_thre, class_thre, score_threshold=self.conf_thresh, iou_threshold=self.nms_thresh)
 
                 num_detection = [tf.shape(boxes)[0]]
 
@@ -116,105 +116,15 @@ class Detect(object):
         result = {'detection_boxes': detection_boxes,'detection_classes': detection_classes, 'detection_scores': detection_scores, 'detection_masks': detection_masks, 'num_detections': num_detections}
         return result
 
-    def _batch_decode(self, box_p, priors, include_variances=True):
-        # https://github.com/feiyuhuahuo/Yolact_minimal/blob/9299a0cf346e455d672fadd796ac748871ba85e4/utils/box_utils.py#L151
-        """
-        Decode predicted bbox coordinates using the scheme
-        employed at https://lilianweng.github.io/lil-log/2017/12/31/object-recognition-for-dummies-part-3.html
-            b_x = prior_w*loc_x + prior_x
-            b_y = prior_h*loc_y + prior_y
-            b_w = prior_w * exp(loc_w)
-            b_h = prior_h * exp(loc_h)
-        
-        Note that loc is inputed as [c_x, x_y, w, h]
-        while priors are inputed as [c_x, c_y, w, h] where each coordinate
-        is relative to size of the image.
-        
-        Also note that prior_x and prior_y are center coordinates.
-        """
-        variances = [0.1, 0.2]
-        box_p = tf.cast(box_p, tf.float32)
-        priors = tf.cast(priors, tf.float32)
-        if include_variances:
-            b_x_y = priors[:, :2] + box_p[:, :, :2] * priors[:, 2:]* variances[0]
-            b_w_h = priors[:, 2:] * tf.math.exp(box_p[:, :, 2:]* variances[1])
-        else:
-            b_x_y = priors[:, :2] + box_p[:, :, :2] * priors[:, 2:]
-            b_w_h = priors[:, 2:] * tf.math.exp(box_p[:, :, 2:])
-        
-        boxes = tf.concat([b_x_y, b_w_h], axis=-1)
-        
-        # [x_min, y_min, x_max, y_max]
-        boxes = tf.concat([boxes[:, :, :2] - boxes[:, :, 2:] / 2, boxes[:, :, 2:] / 2 + boxes[:, :, :2]], axis=-1)
-        
-        # [y_min, x_min, y_max, x_max]
-        return tf.stack([boxes[:, :, 1], boxes[:, :, 0],boxes[:, :, 3], boxes[:, :, 2]], axis=-1)
-
-    def _decode(self, box_p, priors, include_variances=True):
-        # https://github.com/feiyuhuahuo/Yolact_minimal/blob/9299a0cf346e455d672fadd796ac748871ba85e4/utils/box_utils.py#L151
-        """
-        Decode predicted bbox coordinates using the scheme
-        employed at https://lilianweng.github.io/lil-log/2017/12/31/object-recognition-for-dummies-part-3.html
-            b_x = prior_w*loc_x + prior_x
-            b_y = prior_h*loc_y + prior_y
-            b_w = prior_w * exp(loc_w)
-            b_h = prior_h * exp(loc_h)
-        
-        Note that loc is inputed as [c_x, x_y, w, h]
-        while priors are inputed as [c_x, c_y, w, h] where each coordinate
-        is relative to size of the image.
-        
-        Also note that prior_x and prior_y are center coordinates.
-        """
-        variances = [0.1, 0.2]
-        box_p = tf.cast(box_p, tf.float32)
-        priors = tf.cast(priors, tf.float32)
-
-        ph = priors[:, 2] - priors[:, 0]
-        pw = priors[:, 3] - priors[:, 1]
-        priors = tf.cast(tf.stack(
-            [priors[:, 1] + (pw / 2), 
-            priors[:, 0] + (ph / 2), pw, ph], 
-            axis=-1), tf.float32)
-
-        if include_variances:
-            b_x_y = priors[:, :2] + box_p[:, :2] * priors[:, 2:]* variances[0]
-            b_w_h = priors[:, 2:] * tf.math.exp(box_p[:, 2:]* variances[1])
-        else:
-            b_x_y = priors[:, :2] + box_p[:, :2] * priors[:, 2:]
-            b_w_h = priors[:, 2:] * tf.math.exp(box_p[:, 2:])
-        
-        boxes = tf.concat([b_x_y, b_w_h], axis=-1)
-        
-        # [x_min, y_min, x_max, y_max]
-        boxes = tf.concat([boxes[:, :2] - boxes[:, 2:] / 2, boxes[:, 2:] / 2 + boxes[:, :2]], axis=-1)
-        
-        # [y_min, x_min, y_max, x_max]
-        return tf.stack([boxes[:, 1], boxes[:, 0],boxes[:, 3], boxes[:, 2]], axis=-1)
-
-    def _sanitize_coordinates(self, _x1, _x2, size, padding: int = 0):
-        """
-        Sanitizes the input coordinates so that x1 < x2, x1 != x2, x1 >= 0, and x2 <= image_size.
-        Also converts from relative to absolute coordinates and casts the results to long tensors.
-        Warning: this does things in-place behind the scenes so copy if necessary.
-        """
-        x1 = tf.math.minimum(_x1, _x2)
-        x2 = tf.math.maximum(_x1, _x2)
-        x1 = tf.clip_by_value(x1 - padding, clip_value_min=0.0, clip_value_max=tf.cast(size,tf.float32))
-        x2 = tf.clip_by_value(x2 + padding, clip_value_min=0.0, clip_value_max=tf.cast(size,tf.float32))
-
-        # Normalize the coordinates
-        return x1, x2
-
-    def _sanitize(self, boxes, width, height,  padding: int = 0, crop_size=(30,30)):
+    def _sanitize(self, boxes, width, height,  padding: int = 0):
         """
         "Crop" predicted masks by zeroing out everything not in the predicted bbox.
         Args:
             - masks should be a size [h, w, n] tensor of masks
             - boxes should be a size [n, 4] tensor of bbox coords in relative point form
         """        
-        x1, x2 = self._sanitize_coordinates(boxes[:, 1], boxes[:, 3], width, padding)
-        y1, y2 = self._sanitize_coordinates(boxes[:, 0], boxes[:, 2], height, padding)
+        x1, x2 = utils._sanitize_coordinates(boxes[:, 1], boxes[:, 3], width, normalized=False)
+        y1, y2 = utils._sanitize_coordinates(boxes[:, 0], boxes[:, 2], height, normalized=False)
 
         boxes = tf.stack((y1, x1, y2, x2), axis=1)
 
@@ -252,6 +162,90 @@ class Detect(object):
         boxes = tf.gather(_boxes, _ids)[:max_output_size]
         mask_coef = tf.gather(_coefs, _ids)[:max_output_size]
         classes = tf.gather(_classes, _ids)[:max_output_size]
-
         return boxes, mask_coef, classes, scores
 
+    def _traditional_nms_v2(self, boxes, mask_coef, scores, iou_threshold=0.5, score_threshold=0.05, max_output_size=300):
+        selected_indices = tf.image.non_max_suppression(boxes, 
+            tf.reduce_max(scores, axis=-1), 
+            max_output_size=max_output_size, 
+            iou_threshold=iou_threshold, 
+            score_threshold=score_threshold)
+
+        classes = tf.argmax(scores, axis=-1)+1
+        boxes = tf.gather(boxes, selected_indices)
+        scores = tf.gather(tf.reduce_max(scores, axis=-1), selected_indices)
+        mask_coef = tf.gather(mask_coef, selected_indices)
+        classes = tf.cast(tf.gather(classes, selected_indices), dtype=tf.float32)
+        return boxes, mask_coef, classes, scores
+
+    def _cc_fast_nms(self, boxes, masks, scores, iou_threshold:float=0.5, top_k:int=15):
+        # Cross Class NMS
+        # Collapse all the classes into 1 
+        classes = tf.argmax(scores, axis=-1)+1
+        scores = tf.reduce_max(scores, axis=-1)
+        _, idx = tf.math.top_k(scores, k=tf.math.minimum(top_k, tf.shape(scores)[0]))
+        boxes_idx = tf.gather(boxes, idx, axis=0)
+
+        # Compute the pairwise IoU between the boxes
+        iou = utils._iou(boxes_idx, boxes_idx)
+
+        # Zero out the lower triangle of the cosine similarity matrix and diagonal
+        iou = tf.linalg.band_part(iou, 0, -1) - tf.linalg.band_part(iou, 0, 0)
+
+        # Now that everything in the diagonal and below is zeroed out, if we take the max
+        # of the IoU matrix along the columns, each column will represent the maximum IoU
+        # between this element and every element with a higher score than this element.
+        iou_max = tf.reduce_max(iou, axis=0)
+
+        # Now just filter out the ones greater than the threshold, i.e., only keep boxes that
+        # don't have a higher scoring box that would supress it in normal NMS.
+        idx_det = (iou_max <= iou_threshold)
+        idx_det = tf.where(idx_det == True)
+
+        classes = tf.gather_nd(classes, idx_det)
+        boxes = tf.gather_nd(boxes, idx_det)
+        masks = tf.gather_nd(masks, idx_det)
+        scores = tf.gather_nd(scores, idx_det)
+
+        return boxes, masks, classes, scores
+    
+    def _fast_nms(self, boxes, masks, scores, iou_threshold=0.5, top_k=100):
+        if tf.rank(scores) == 1:
+            scores = tf.expand_dims(scores, axis=-1)
+            boxes = tf.expand_dims(boxes, axis=0)
+            masks = tf.expand_dims(masks, axis=0)
+
+        scores, idx = tf.math.top_k(scores, k=top_k)
+        num_classes, num_dets = tf.shape(idx)[0], tf.shape(idx)[1]
+        boxes = tf.gather(boxes, idx, axis=0)
+        masks = tf.gather(masks, idx, axis=0)
+        iou = utils._iou(boxes, boxes)
+        # upper trangular matrix - diagnoal
+        upper_triangular = tf.linalg.band_part(iou, 0, -1)
+        diag = tf.linalg.band_part(iou, 0, 0)
+        iou = upper_triangular - diag
+
+        # fitler out the unwanted ROI
+        iou_max = tf.reduce_max(iou, axis=1)
+        idx_det = (iou_max <= iou_threshold)
+
+        # second threshold
+        # second_threshold = (iou_max <= self.conf_threshold)
+        second_threshold = (scores > self.conf_threshold)
+        idx_det = tf.where(tf.logical_and(idx_det, second_threshold) == True)
+        classes = tf.broadcast_to(tf.expand_dims(tf.range(num_classes), axis=-1), tf.shape(iou_max))
+        classes = tf.gather_nd(classes, idx_det)
+        boxes = tf.gather_nd(boxes, idx_det)
+        masks = tf.gather_nd(masks, idx_det)
+        scores = tf.gather_nd(scores, idx_det)
+
+        # number of max detection = 100 (u can choose whatever u want)
+        max_num_detection = tf.math.minimum(self.max_num_detection, tf.size(scores))
+        scores, idx = tf.math.top_k(scores, k=max_num_detection)
+
+        # second threshold
+        classes = tf.gather(classes, idx)
+        boxes = tf.gather(boxes, idx)
+        masks = tf.gather(masks, idx)
+
+        return boxes, masks, classes, scores

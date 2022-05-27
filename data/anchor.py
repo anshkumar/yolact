@@ -1,6 +1,6 @@
 from itertools import product
 from math import sqrt
-
+from utils import utils
 import tensorflow as tf
 
 # Can generate one instance only when creating the model
@@ -53,126 +53,6 @@ class Anchor(object):
         output = tf.cast(output, tf.float32)
         return num_anchors, output
 
-    def _encode(self, map_loc, anchors, include_variances=True):
-        # For variance in priorbox layer:
-        # https://github.com/weiliu89/caffe/issues/155
-
-        # center_gt = tf.map_fn(lambda x: map_to_center_form(x), map_loc)
-        # center_anchors in [ymin, xmin, ymax, xmax ]
-        # map_loc in [ymin, xmin, ymax, xmax ]
-        gh = map_loc[:, 2] - map_loc[:, 0]
-        gw = map_loc[:, 3] - map_loc[:, 1]
-        center_gt = tf.cast(tf.stack(
-            [map_loc[:, 1] + (gw / 2), 
-            map_loc[:, 0] + (gh / 2), gw, gh], 
-            axis=-1), tf.float32)
-
-        ph = anchors[:, 2] - anchors[:, 0]
-        pw = anchors[:, 3] - anchors[:, 1]
-        center_anchors = tf.cast(tf.stack(
-            [anchors[:, 1] + (pw / 2), 
-            anchors[:, 0] + (ph / 2), pw, ph], 
-            axis=-1), tf.float32)
-        variances = [0.1, 0.2]
-
-        # calculate offset
-        if include_variances:
-            g_hat_cx = (center_gt[:, 0] - center_anchors[:, 0]
-                ) / center_anchors[:, 2] / variances[0]
-            g_hat_cy = (center_gt[:, 1] - center_anchors[:, 1]
-                ) / center_anchors[:, 3] / variances[0]
-        else:
-            g_hat_cx = (center_gt[:, 0] - center_anchors[:, 0]
-                ) / center_anchors[:, 2]
-            g_hat_cy = (center_gt[:, 1] - center_anchors[:, 1]
-                ) / center_anchors[:, 3]
-        tf.debugging.assert_non_negative(center_anchors[:, 2] / center_gt[:, 2])
-        tf.debugging.assert_non_negative(center_anchors[:, 3] / center_gt[:, 3])
-        if include_variances:
-            g_hat_w = tf.math.log(center_gt[:, 2] / center_anchors[:, 2]
-                ) / variances[1]
-            g_hat_h = tf.math.log(center_gt[:, 3] / center_anchors[:, 3]
-                ) / variances[1]
-        else:
-            g_hat_w = tf.math.log(center_gt[:, 2] / center_anchors[:, 2])
-            g_hat_h = tf.math.log(center_gt[:, 3] / center_anchors[:, 3])
-        tf.debugging.assert_all_finite(g_hat_cx, 
-            "Ground truth box x encoding NaN/Inf")
-        tf.debugging.assert_all_finite(g_hat_cy, 
-            "Ground truth box y encoding NaN/Inf")
-        tf.debugging.assert_all_finite(g_hat_w, 
-            "Ground truth box width encoding NaN/Inf")
-        tf.debugging.assert_all_finite(g_hat_h, 
-            "Ground truth box height encoding NaN/Inf")
-        offsets = tf.stack([g_hat_cx, g_hat_cy, g_hat_w, g_hat_h], axis=-1)
-        
-        return offsets
-
-    def _area(self, boxlist, scope=None):
-        # https://github.com/tensorflow/models/blob/831281cedfc8a4a0ad7c0c37173
-        # 963fafb99da37/official/vision/detection/utils/object_detection/
-        # box_list_ops.py#L48
-
-        """Computes area of boxes.
-        Args:
-        boxlist: BoxList holding N boxes
-        scope: name scope.
-        Returns:
-        a tensor with shape [N] representing box areas.
-        """
-        y_min, x_min, y_max, x_max = tf.split(
-            value=boxlist, num_or_size_splits=4, axis=1)
-        return tf.squeeze((y_max - y_min) * (x_max - x_min), [1])
-
-    def _intersection(self, boxlist1, boxlist2, scope=None):
-        # https://github.com/tensorflow/models/blob/831281cedfc8a4a0ad7c0c37173
-        # 963fafb99da37/official/vision/detection/utils/object_detection/
-        # box_list_ops.py#L209
-
-        """Compute pairwise intersection areas between boxes.
-        Args:
-        boxlist1: BoxList holding N boxes
-        boxlist2: BoxList holding M boxes
-        scope: name scope.
-        Returns:
-        a tensor with shape [N, M] representing pairwise intersections
-        """
-        y_min1, x_min1, y_max1, x_max1 = tf.split(
-            value=boxlist1, num_or_size_splits=4, axis=1)
-        y_min2, x_min2, y_max2, x_max2 = tf.split(
-            value=boxlist2, num_or_size_splits=4, axis=1)
-        all_pairs_min_ymax = tf.minimum(y_max1, tf.transpose(y_max2))
-        all_pairs_max_ymin = tf.maximum(y_min1, tf.transpose(y_min2))
-        intersect_heights = tf.maximum(0.0, 
-            all_pairs_min_ymax - all_pairs_max_ymin)
-        all_pairs_min_xmax = tf.minimum(x_max1, tf.transpose(x_max2))
-        all_pairs_max_xmin = tf.maximum(x_min1, tf.transpose(x_min2))
-        intersect_widths = tf.maximum(0.0, 
-            all_pairs_min_xmax - all_pairs_max_xmin)
-        return intersect_heights * intersect_widths
-
-    def _iou(self, boxlist1, boxlist2, scope=None):
-        # https://github.com/tensorflow/models/blob/831281cedfc8a4a0ad7c0c37173
-        # 963fafb99da37/official/vision/detection/utils/object_detection/
-        # box_list_ops.py#L259
-
-        """Computes pairwise intersection-over-union between box collections.
-        Args:
-        boxlist1: BoxList holding N boxes
-        boxlist2: BoxList holding M boxes
-        scope: name scope.
-        Returns:
-        a tensor with shape [N, M] representing pairwise iou scores.
-        """
-        intersections = self._intersection(boxlist1, boxlist2)
-        areas1 = self._area(boxlist1)
-        areas2 = self._area(boxlist2)
-        unions = (tf.expand_dims(areas1, 1) + tf.expand_dims(
-            areas2, 0) - intersections)
-        return tf.where(
-            tf.equal(intersections, 0.0),
-            tf.zeros_like(intersections), tf.truediv(intersections, unions))
-
     def get_anchors(self):
         # Convert anchors from [cx, cy, w, h] to [ymin, xmin, ymax, xmax ] 
         # for IOU calculations
@@ -192,7 +72,7 @@ class Anchor(object):
         # ground_truth clong the columns
 
         # anchors and gt_bbox in [y1, x1, y2, x2]
-        pairwise_iou = self._iou(self.anchors, gt_bbox) 
+        pairwise_iou = utils._iou(self.anchors, gt_bbox) 
 
         # size [num_priors]; iou with ground truth with the anchors
         each_prior_max = tf.reduce_max(pairwise_iou, axis=-1) 
@@ -243,6 +123,6 @@ class Anchor(object):
             tf.zeros(tf.size(background_label_index), dtype=tf.int64))
 
         # anchors and each_prior_box in [y1, x1, y2, x2]
-        offsets = self._encode(each_prior_box, self.anchors)
+        offsets = utils._encode(each_prior_box, self.anchors)
 
         return offsets, conf, each_prior_box, each_prior_index

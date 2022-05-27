@@ -4,55 +4,70 @@ Arthor: Vedanshu
 
 import tensorflow as tf
 
-def bboxes_intersection(bbox_ref, bboxes):
-    """Compute relative intersection between a reference box and a
-    collection of bounding boxes. Namely, compute the quotient between
-    intersection area and box area.
+def _area(boxlist, scope=None):
+    # https://github.com/tensorflow/models/blob/831281cedfc8a4a0ad7c0c37173
+    # 963fafb99da37/official/vision/detection/utils/object_detection/
+    # box_list_ops.py#L48
+
+    """Computes area of boxes.
     Args:
-      bbox_ref: (N, 4) or (4,) Tensor with reference bounding box(es).
-      bboxes: (N, 4) Tensor, collection of bounding boxes.
-    Return:
-      (N,) Tensor with relative intersection.
+    boxlist: BoxList holding N boxes
+    scope: name scope.
+    Returns:
+    a tensor with shape [N] representing box areas.
     """
+    y_min, x_min, y_max, x_max = tf.split(
+        value=boxlist, num_or_size_splits=4, axis=1)
+    return tf.squeeze((y_max - y_min) * (x_max - x_min), [1])
 
-    # Should be more efficient to first transpose.
-    bboxes = tf.transpose(bboxes)
-    bbox_ref = tf.transpose(bbox_ref)
-    # Intersection bbox and volume.
-    int_ymin = tf.maximum(bboxes[0], bbox_ref[0])
-    int_xmin = tf.maximum(bboxes[1], bbox_ref[1])
-    int_ymax = tf.minimum(bboxes[2], bbox_ref[2])
-    int_xmax = tf.minimum(bboxes[3], bbox_ref[3])
-    h = tf.maximum(int_ymax - int_ymin, 0.)
-    w = tf.maximum(int_xmax - int_xmin, 0.)
-    # Volumes.
-    inter_vol = h * w
-    bboxes_vol = (bboxes[2] - bboxes[0]) * (bboxes[3] - bboxes[1])
+def _intersection(boxlist1, boxlist2, scope=None):
+    # https://github.com/tensorflow/models/blob/831281cedfc8a4a0ad7c0c37173
+    # 963fafb99da37/official/vision/detection/utils/object_detection/
+    # box_list_ops.py#L209
 
+    """Compute pairwise intersection areas between boxes.
+    Args:
+    boxlist1: BoxList holding N boxes
+    boxlist2: BoxList holding M boxes
+    scope: name scope.
+    Returns:
+    a tensor with shape [N, M] representing pairwise intersections
+    """
+    y_min1, x_min1, y_max1, x_max1 = tf.split(
+        value=boxlist1, num_or_size_splits=4, axis=1)
+    y_min2, x_min2, y_max2, x_max2 = tf.split(
+        value=boxlist2, num_or_size_splits=4, axis=1)
+    all_pairs_min_ymax = tf.minimum(y_max1, tf.transpose(y_max2))
+    all_pairs_max_ymin = tf.maximum(y_min1, tf.transpose(y_min2))
+    intersect_heights = tf.maximum(0.0, 
+        all_pairs_min_ymax - all_pairs_max_ymin)
+    all_pairs_min_xmax = tf.minimum(x_max1, tf.transpose(x_max2))
+    all_pairs_max_xmin = tf.maximum(x_min1, tf.transpose(x_min2))
+    intersect_widths = tf.maximum(0.0, 
+        all_pairs_min_xmax - all_pairs_max_xmin)
+    return intersect_heights * intersect_widths
+
+def _iou(boxlist1, boxlist2, scope=None):
+    # https://github.com/tensorflow/models/blob/831281cedfc8a4a0ad7c0c37173
+    # 963fafb99da37/official/vision/detection/utils/object_detection/
+    # box_list_ops.py#L259
+
+    """Computes pairwise intersection-over-union between box collections.
+    Args:
+    boxlist1: BoxList holding N boxes
+    boxlist2: BoxList holding M boxes
+    scope: name scope.
+    Returns:
+    a tensor with shape [N, M] representing pairwise iou scores.
+    """
+    intersections = _intersection(boxlist1, boxlist2)
+    areas1 = _area(boxlist1)
+    areas2 = _area(boxlist2)
+    unions = (tf.expand_dims(areas1, 1) + tf.expand_dims(
+        areas2, 0) - intersections)
     return tf.where(
-        tf.equal(bboxes_vol, 0.0),
-        tf.zeros_like(inter_vol), inter_vol / bboxes_vol)
-
-
-def normalize_image(image,
-                    offset=(0.485, 0.456, 0.406),
-                    scale=(0.229, 0.224, 0.225)):
-    """Normalizes the image to zero mean and unit variance.
-     ref: https://github.com/tensorflow/models/blob/3462436c91897f885e3593f0955d24cbe805333d/official/vision/detection/utils/input_utils.py
-  """
-    image = tf.image.convert_image_dtype(image, dtype=tf.float32)
-    offset = tf.constant(offset)
-    offset = tf.expand_dims(offset, axis=0)
-    offset = tf.expand_dims(offset, axis=0)
-    image -= offset
-
-    scale = tf.constant(scale)
-    scale = tf.expand_dims(scale, axis=0)
-    scale = tf.expand_dims(scale, axis=0)
-    image /= scale
-    image *= 255
-    return image
-
+        tf.equal(intersections, 0.0),
+        tf.zeros_like(intersections), tf.truediv(intersections, unions))
 
 # mapping from [ymin, xmin, ymax, xmax] to [cx, cy, w, h]
 def map_to_center_form(x):
@@ -120,3 +135,134 @@ def crop(mask_p, boxes, padding = 1, normalized=True):
 # decode the offset back to center form bounding box when evaluation and prediction
 def map_to_bbox(x):
     pass
+
+def _batch_decode(box_p, priors, include_variances=True):
+    # https://github.com/feiyuhuahuo/Yolact_minimal/blob/9299a0cf346e455d672fadd796ac748871ba85e4/utils/box_utils.py#L151
+    """
+    Decode predicted bbox coordinates using the scheme
+    employed at https://lilianweng.github.io/lil-log/2017/12/31/object-recognition-for-dummies-part-3.html
+        b_x = prior_w*loc_x + prior_x
+        b_y = prior_h*loc_y + prior_y
+        b_w = prior_w * exp(loc_w)
+        b_h = prior_h * exp(loc_h)
+    
+    Note that loc is inputed as [c_x, x_y, w, h]
+    while priors are inputed as [c_x, c_y, w, h] where each coordinate
+    is relative to size of the image.
+    
+    Also note that prior_x and prior_y are center coordinates.
+    """
+    variances = [0.1, 0.2]
+    box_p = tf.cast(box_p, tf.float32)
+    priors = tf.cast(priors, tf.float32)
+    if include_variances:
+        b_x_y = priors[:, :2] + box_p[:, :, :2] * priors[:, 2:]* variances[0]
+        b_w_h = priors[:, 2:] * tf.math.exp(box_p[:, :, 2:]* variances[1])
+    else:
+        b_x_y = priors[:, :2] + box_p[:, :, :2] * priors[:, 2:]
+        b_w_h = priors[:, 2:] * tf.math.exp(box_p[:, :, 2:])
+    
+    boxes = tf.concat([b_x_y, b_w_h], axis=-1)
+    
+    # [x_min, y_min, x_max, y_max]
+    boxes = tf.concat([boxes[:, :, :2] - boxes[:, :, 2:] / 2, boxes[:, :, 2:] / 2 + boxes[:, :, :2]], axis=-1)
+    
+    # [y_min, x_min, y_max, x_max]
+    return tf.stack([boxes[:, :, 1], boxes[:, :, 0],boxes[:, :, 3], boxes[:, :, 2]], axis=-1)
+
+def _decode(box_p, priors, include_variances=True):
+    # https://github.com/feiyuhuahuo/Yolact_minimal/blob/9299a0cf346e455d672fadd796ac748871ba85e4/utils/box_utils.py#L151
+    """
+    Decode predicted bbox coordinates using the scheme
+    employed at https://lilianweng.github.io/lil-log/2017/12/31/object-recognition-for-dummies-part-3.html
+        b_x = prior_w*loc_x + prior_x
+        b_y = prior_h*loc_y + prior_y
+        b_w = prior_w * exp(loc_w)
+        b_h = prior_h * exp(loc_h)
+    
+    Note that loc is inputed as [c_x, x_y, w, h]
+    while priors are inputed as [c_x, c_y, w, h] where each coordinate
+    is relative to size of the image.
+    
+    Also note that prior_x and prior_y are center coordinates.
+    """
+    variances = [0.1, 0.2]
+    box_p = tf.cast(box_p, tf.float32)
+    priors = tf.cast(priors, tf.float32)
+
+    ph = priors[:, 2] - priors[:, 0]
+    pw = priors[:, 3] - priors[:, 1]
+    priors = tf.cast(tf.stack(
+        [priors[:, 1] + (pw / 2), 
+        priors[:, 0] + (ph / 2), pw, ph], 
+        axis=-1), tf.float32)
+
+    if include_variances:
+        b_x_y = priors[:, :2] + box_p[:, :2] * priors[:, 2:]* variances[0]
+        b_w_h = priors[:, 2:] * tf.math.exp(box_p[:, 2:]* variances[1])
+    else:
+        b_x_y = priors[:, :2] + box_p[:, :2] * priors[:, 2:]
+        b_w_h = priors[:, 2:] * tf.math.exp(box_p[:, 2:])
+    
+    boxes = tf.concat([b_x_y, b_w_h], axis=-1)
+    
+    # [x_min, y_min, x_max, y_max]
+    boxes = tf.concat([boxes[:, :2] - boxes[:, 2:] / 2, boxes[:, 2:] / 2 + boxes[:, :2]], axis=-1)
+    
+    # [y_min, x_min, y_max, x_max]
+    return tf.stack([boxes[:, 1], boxes[:, 0],boxes[:, 3], boxes[:, 2]], axis=-1)
+
+def _encode(map_loc, anchors, include_variances=True):
+    # For variance in priorbox layer:
+    # https://github.com/weiliu89/caffe/issues/155
+
+    # center_gt = tf.map_fn(lambda x: map_to_center_form(x), map_loc)
+    # center_anchors in [ymin, xmin, ymax, xmax ]
+    # map_loc in [ymin, xmin, ymax, xmax ]
+    gh = map_loc[:, 2] - map_loc[:, 0]
+    gw = map_loc[:, 3] - map_loc[:, 1]
+    center_gt = tf.cast(tf.stack(
+        [map_loc[:, 1] + (gw / 2), 
+        map_loc[:, 0] + (gh / 2), gw, gh], 
+        axis=-1), tf.float32)
+
+    ph = anchors[:, 2] - anchors[:, 0]
+    pw = anchors[:, 3] - anchors[:, 1]
+    center_anchors = tf.cast(tf.stack(
+        [anchors[:, 1] + (pw / 2), 
+        anchors[:, 0] + (ph / 2), pw, ph], 
+        axis=-1), tf.float32)
+    variances = [0.1, 0.2]
+
+    # calculate offset
+    if include_variances:
+        g_hat_cx = (center_gt[:, 0] - center_anchors[:, 0]
+            ) / center_anchors[:, 2] / variances[0]
+        g_hat_cy = (center_gt[:, 1] - center_anchors[:, 1]
+            ) / center_anchors[:, 3] / variances[0]
+    else:
+        g_hat_cx = (center_gt[:, 0] - center_anchors[:, 0]
+            ) / center_anchors[:, 2]
+        g_hat_cy = (center_gt[:, 1] - center_anchors[:, 1]
+            ) / center_anchors[:, 3]
+    tf.debugging.assert_non_negative(center_anchors[:, 2] / center_gt[:, 2])
+    tf.debugging.assert_non_negative(center_anchors[:, 3] / center_gt[:, 3])
+    if include_variances:
+        g_hat_w = tf.math.log(center_gt[:, 2] / center_anchors[:, 2]
+            ) / variances[1]
+        g_hat_h = tf.math.log(center_gt[:, 3] / center_anchors[:, 3]
+            ) / variances[1]
+    else:
+        g_hat_w = tf.math.log(center_gt[:, 2] / center_anchors[:, 2])
+        g_hat_h = tf.math.log(center_gt[:, 3] / center_anchors[:, 3])
+    tf.debugging.assert_all_finite(g_hat_cx, 
+        "Ground truth box x encoding NaN/Inf")
+    tf.debugging.assert_all_finite(g_hat_cy, 
+        "Ground truth box y encoding NaN/Inf")
+    tf.debugging.assert_all_finite(g_hat_w, 
+        "Ground truth box width encoding NaN/Inf")
+    tf.debugging.assert_all_finite(g_hat_h, 
+        "Ground truth box height encoding NaN/Inf")
+    offsets = tf.stack([g_hat_cx, g_hat_cy, g_hat_w, g_hat_h], axis=-1)
+    
+    return offsets
