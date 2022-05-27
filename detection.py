@@ -123,8 +123,8 @@ class Detect(object):
             - masks should be a size [h, w, n] tensor of masks
             - boxes should be a size [n, 4] tensor of bbox coords in relative point form
         """        
-        x1, x2 = utils._sanitize_coordinates(boxes[:, 1], boxes[:, 3], width, normalized=False)
-        y1, y2 = utils._sanitize_coordinates(boxes[:, 0], boxes[:, 2], height, normalized=False)
+        x1, x2 = utils.sanitize_coordinates(boxes[:, 1], boxes[:, 3], width, normalized=False)
+        y1, y2 = utils.sanitize_coordinates(boxes[:, 0], boxes[:, 2], height, normalized=False)
 
         boxes = tf.stack((y1, x1, y2, x2), axis=1)
 
