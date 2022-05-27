@@ -123,8 +123,8 @@ class Detect(object):
             - masks should be a size [h, w, n] tensor of masks
             - boxes should be a size [n, 4] tensor of bbox coords in relative point form
         """        
-        x1, x2 = utils.sanitize_coordinates(boxes[:, 1], boxes[:, 3], width, normalized=False)
-        y1, y2 = utils.sanitize_coordinates(boxes[:, 0], boxes[:, 2], height, normalized=False)
+        x1, x2 = utils.sanitize_coordinates(boxes[:, 1], boxes[:, 3], tf.cast(width, dtype=tf.float32), normalized=False)
+        y1, y2 = utils.sanitize_coordinates(boxes[:, 0], boxes[:, 2], tf.cast(height, dtype=tf.float32), normalized=False)
 
         boxes = tf.stack((y1, x1, y2, x2), axis=1)
 
@@ -199,13 +199,12 @@ class Detect(object):
 
         # Now just filter out the ones greater than the threshold, i.e., only keep boxes that
         # don't have a higher scoring box that would supress it in normal NMS.
-        idx_det = (iou_max <= iou_threshold)
-        idx_det = tf.where(idx_det == True)
+        idx_out = idx[iou_max <= iou_threshold]
 
-        classes = tf.gather_nd(classes, idx_det)
-        boxes = tf.gather_nd(boxes, idx_det)
-        masks = tf.gather_nd(masks, idx_det)
-        scores = tf.gather_nd(scores, idx_det)
+        classes = tf.cast(tf.gather_nd(classes, tf.expand_dims(idx_out, axis=-1)), dtype=tf.float32)
+        boxes = tf.gather_nd(boxes, tf.expand_dims(idx_out, axis=-1))
+        masks = tf.gather_nd(masks, tf.expand_dims(idx_out, axis=-1))
+        scores = tf.gather_nd(scores, tf.expand_dims(idx_out, axis=-1))
 
         return boxes, masks, classes, scores
     

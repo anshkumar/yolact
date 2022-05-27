@@ -86,7 +86,7 @@ def map_to_offset(x):
     g_hat_h = tf.math.log(x[3, 0] / x[3, 1])
     return tf.stack([g_hat_cx, g_hat_cy, g_hat_w, g_hat_h])
 
-def sanitize_coordinates(_x1, _x2, img_size, normalized, padding = 0):
+def sanitize_coordinates(_x1, _x2, img_size, normalized, padding = 0.0):
     """
     Sanitizes the input coordinates so that x1 < x2, x1 != x2, x1 >= 0, and x2 <= image_size.
     Also converts from relative to absolute coordinates and casts the results to long tensors.
@@ -98,8 +98,8 @@ def sanitize_coordinates(_x1, _x2, img_size, normalized, padding = 0):
 
     x1 = tf.math.minimum(_x1, _x2)
     x2 = tf.math.maximum(_x1, _x2)
-    x1 = tf.clip_by_value(x1 - padding, clip_value_min=0, clip_value_max=img_size)
-    x2 = tf.clip_by_value(x2 + padding, clip_value_min=0, clip_value_max=img_size)
+    x1 = tf.clip_by_value(x1 - padding, clip_value_min=0.0, clip_value_max=img_size)
+    x2 = tf.clip_by_value(x2 + padding, clip_value_min=0.0, clip_value_max=img_size)
 
     return x1, x2
 
