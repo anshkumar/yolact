@@ -93,45 +93,17 @@ Run the compilation process again:
 protoc protos/*.proto --python_out=.
 ```
 
-## Compile tensorflow addon for DCNv2 support (YOLACT++)
-1. Git clone https://github.com/tensorflow/addons.
-2. Apply the patch named `deformable_conv2d.patch` (`git am -3 < deformable_conv2d.patch`).
-3. Compile tensorflow addon. For example for cuda 10.1 
+## Compile DCNv2 (YOLACT++)
+In `~/.bashrc` add following:
 ```
-# Only CUDA 10.1 Update 1 
-cd addons
-export TF_NEED_CUDA="1"
-
-# Set these if the below defaults are different on your system
-export TF_CUDA_VERSION="10.1"
-export TF_CUDNN_VERSION="7"
-export CUDA_TOOLKIT_PATH="/usr/local/cuda"
-export CUDNN_INSTALL_PATH="/usr/lib/x86_64-linux-gnu"
-
-# This script links project with TensorFlow dependency
-python3 ./configure.py
-
-bazel build build_pip_pkg --cxxopt="-D_GLIBCXX_USE_CXX11_ABI=0"
-bazel-bin/build_pip_pkg artifacts
+export LD_LIBRARY_PATH="$LD_LIBRARY_PATH:/usr/local/cuda-11.6/lib64"
+export PATH="$PATH:~/.local/bin:/usr/local/cuda-11.6/bin"
 ```
-4. Pass `-use_dcn True` and `-use_mask_iou True` to train.py
-
-I've compiled [tensorflow_addons-0.11.2](tensorflow_addons/tensorflow_addons-0.11.2-cp36-cp36m-linux_x86_64.whl)(cuda 10.1, cudnn 7.6, tf 2.3.0), [tensorflow_addons-0.13.0](tensorflow_addons/tensorflow_addons-0.13.0-cp36-cp36m-linux_x86_64.whl)(cuda 11.2, cudnn 8.2, tf 2.5.0) and [tensorflow_addons-0.17.0](tensorflow_addons/tensorflow_addons-0.17.0.dev0-cp36-cp36m-linux_x86_64.whl)(cuda 11.6, cudnn 8.3, tf 2.6.2) for python3.6.
-
-Note: While compiling tensorflow addon for tf 2.5+, change the header in `addons/tensorflow_addons/custom_ops/layers/cc/kernels/deformable_conv2d_op.h` from 
+Copy the CUDA header files to required target directory
 ```
-#include "tensorflow/core/kernels/batch_matmul_op_impl.h"
+mkdir -p /home/sort/.local/lib/python3.8/site-packages/tensorflow/include/third_party/gpus/cuda/include && cp -r /usr/local/cuda/targets/x86_64-linux/include/* /home/sort/.local/lib/python3.8/site-packages/tensorflow/include/third_party/gpus/cuda/include
 ```
-to this:
-```
-#include "tensorflow/core/kernels/matmul_op_impl.h"
-```
-
-Also, with cuda 11.4+ where following error is coming:
-```
-status: Internal: too many resources requested for launch
-```
-need to reduce threads per block in `deformable_conv2d.patch`. For this change every occurrence of `config.thread_per_block` with `config.thread_per_block/2`.  
+Change the user-name and path accordingly (conda env will require different path). 
 
 ## Create TFRecord for training 
 Refer to the tensorflow object detection api for tfrecord creation. ([link](https://github.com/tensorflow/models/blob/master/research/object_detection/g3doc/using_your_own_dataset.md))

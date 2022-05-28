@@ -80,7 +80,10 @@ class DeformableConv2D(keras.layers.Layer):
                  use_bias=False, padding="VALID", data_format='NCHW', dilations=(1, 1, 1, 1)):
         super(DeformableConv2D, self).__init__()
         self.filters = filters
-        self.kernel_size = kernel_size
+        if isinstance(kernel_size, tuple):
+            self.kernel_size = kernel_size
+        else:
+            self.kernel_size = (kernel_size, kernel_size)
         self.num_groups = num_groups
         self.deformable_groups = deformable_groups
         self.strides = strides

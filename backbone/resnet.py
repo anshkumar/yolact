@@ -265,7 +265,7 @@ def block1(x, filters, kernel_size=3, stride=1, conv_shortcut=True,
   x = layers.Activation('relu', name=name + '_1_relu')(x)
 
   if use_dcn:
-    x = dcn_v2.DCN(
+    x = dcn_v2.DeformableConv2D(
         filters, kernel_size, padding='SAME', name=name + '_2_conv_dcn')(x)
   else:
     x = layers.Conv2D(
@@ -350,7 +350,7 @@ def block2(x, filters, kernel_size=3, stride=1, conv_shortcut=False,
 
   x = layers.ZeroPadding2D(padding=((1, 1), (1, 1)), name=name + '_2_pad')(x)
   if use_dcn:
-    x = dcn_v2.DCN(
+    x = dcn_v2.DeformableConv2D(
         filters,
         kernel_size,
         strides=stride,
