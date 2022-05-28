@@ -188,6 +188,9 @@ python train.py -tfrecord_train_dir 'path of TFRecord training files'
 # Inference 
 Inside `saved_models` there will be saved graphs according to the score of their validation. For an example `saved_model_0.19968511` is saved_model when the validation loss was 0.19968511. To run inference on using this saved_model see `infer.py`.
 
+# TFLite support
+Please check `to_tflite.py` for converting `saved_mode.pb` to `.tflite` file. 
+
 # Reference
 * https://github.com/feiyuhuahuo/Yolact_minimal
 * https://github.com/dbolya/yolact

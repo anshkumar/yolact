@@ -44,7 +44,7 @@ converter.target_spec.supported_ops = [
             tf.lite.OpsSet.SELECT_TF_OPS # enable TensorFlow ops.
             ]
 converter.inference_input_type = tf.uint8  # or tf.uint8
-converter.inference_output_type = tf.uint8  # or tf.uint8
+# converter.inference_output_type = tf.uint8  # or tf.uint8
 tflite_quant_model = converter.convert()
 
 open("yolact.tflite", "wb").write(tflite_quant_model)
