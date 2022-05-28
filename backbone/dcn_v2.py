@@ -2,7 +2,7 @@ import tensorflow as tf
 from tensorflow.python.framework import ops
 import tensorflow.keras as keras
 
-custom_ops = tf.load_op_library('/home/vedanshu/Projects/dcn_v2/libops.so')
+custom_ops = tf.load_op_library('../dcn_v2/dcn_v2/libops.so')
 deformable_conv2d_op = custom_ops.deformable_conv2d
 deformable_conv2d_grad_op = custom_ops.deformable_conv2d_back_prop
 deformable_psroi_pool = custom_ops.deformable_psroi_pool
