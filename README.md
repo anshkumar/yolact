@@ -105,6 +105,12 @@ mkdir -p /home/sort/.local/lib/python3.8/site-packages/tensorflow/include/third_
 ```
 Change the user-name and path accordingly (conda env will require different path). 
 
+Make DCN lib.
+```
+cd dcn_v2/
+cmake .
+make
+```
 ## Create TFRecord for training 
 Refer to the tensorflow object detection api for tfrecord creation. ([link](https://github.com/tensorflow/models/blob/master/research/object_detection/g3doc/using_your_own_dataset.md))
 
